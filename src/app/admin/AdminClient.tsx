@@ -36,6 +36,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   }>>([])
   const [loading, setLoading] = useState(false)
   
+  const [txType, setTxType] = useState<string>('deposit')
+  const [bulkTxType, setBulkTxType] = useState<string>('deposit')
+  
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
@@ -109,27 +112,58 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     if (!selectedUser) return
     setLoading(true)
 
-    const type = formData.get('type') as 'deposit' | 'deduction'
-    const amount = parseFloat(formData.get('amount') as string)
-    const note = formData.get('note') as string
+    const type = formData.get('type') as 'deposit' | 'deduction' | 'correction'
+    let finalType: 'deposit' | 'deduction'
+    let finalAmount: number
+    let finalNote: string
 
-    if (!amount || amount <= 0) {
-      toast.error('Please enter a valid amount')
-      setLoading(false)
-      return
-    }
-    if (!note) {
-      toast.error('Note/Reason is mandatory')
-      setLoading(false)
-      return
+    if (type === 'correction') {
+      const mistakeType = formData.get('mistakeType') as 'deposit' | 'deduction'
+      const originalAmount = parseFloat(formData.get('originalAmount') as string)
+      const correctAmount = parseFloat(formData.get('correctAmount') as string)
+
+      if (!originalAmount || originalAmount <= 0 || !correctAmount || correctAmount <= 0) {
+        toast.error('Please enter valid amounts for correction')
+        setLoading(false)
+        return
+      }
+      if (originalAmount === correctAmount) {
+        toast.error('Original and correct amount are the same')
+        setLoading(false)
+        return
+      }
+
+      const diff = correctAmount - originalAmount
+      if (mistakeType === 'deposit') {
+        finalType = diff > 0 ? 'deposit' : 'deduction'
+      } else {
+        finalType = diff > 0 ? 'deduction' : 'deposit'
+      }
+      finalAmount = Math.abs(diff)
+      finalNote = `Correction by Admin: Initially ₹${originalAmount} was entered as a ${mistakeType} in error. Corrected to ₹${correctAmount}.`
+    } else {
+      finalType = type
+      finalAmount = parseFloat(formData.get('amount') as string)
+      finalNote = formData.get('note') as string
+
+      if (!finalAmount || finalAmount <= 0) {
+        toast.error('Please enter a valid amount')
+        setLoading(false)
+        return
+      }
+      if (!finalNote) {
+        toast.error('Note/Reason is mandatory')
+        setLoading(false)
+        return
+      }
     }
 
-    const res = await createTransaction(selectedUser.id, type, amount, note)
+    const res = await createTransaction(selectedUser.id, finalType, finalAmount, finalNote)
     
     if (res.error) {
       toast.error(res.error)
     } else {
-      toast.success(`Successfully processed ${type} of ₹${amount.toFixed(2)} for ${selectedUser.full_name}`)
+      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUser.full_name}`)
       setIsDialogOpen(false)
     }
     setLoading(false)
@@ -139,29 +173,60 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     if (selectedUserIds.size === 0) return
     setLoading(true)
 
-    const type = formData.get('type') as 'deposit' | 'deduction'
-    const amount = parseFloat(formData.get('amount') as string)
-    const note = formData.get('note') as string
+    const type = formData.get('type') as 'deposit' | 'deduction' | 'correction'
+    let finalType: 'deposit' | 'deduction'
+    let finalAmount: number
+    let finalNote: string
 
-    if (!amount || amount <= 0) {
-      toast.error('Please enter a valid amount')
-      setLoading(false)
-      return
-    }
-    if (!note) {
-      toast.error('Note/Reason is mandatory')
-      setLoading(false)
-      return
+    if (type === 'correction') {
+      const mistakeType = formData.get('mistakeType') as 'deposit' | 'deduction'
+      const originalAmount = parseFloat(formData.get('originalAmount') as string)
+      const correctAmount = parseFloat(formData.get('correctAmount') as string)
+
+      if (!originalAmount || originalAmount <= 0 || !correctAmount || correctAmount <= 0) {
+        toast.error('Please enter valid amounts for correction')
+        setLoading(false)
+        return
+      }
+      if (originalAmount === correctAmount) {
+        toast.error('Original and correct amount are the same')
+        setLoading(false)
+        return
+      }
+
+      const diff = correctAmount - originalAmount
+      if (mistakeType === 'deposit') {
+        finalType = diff > 0 ? 'deposit' : 'deduction'
+      } else {
+        finalType = diff > 0 ? 'deduction' : 'deposit'
+      }
+      finalAmount = Math.abs(diff)
+      finalNote = `Correction by Admin: Initially ₹${originalAmount} was entered as a ${mistakeType} in error. Corrected to ₹${correctAmount}.`
+    } else {
+      finalType = type
+      finalAmount = parseFloat(formData.get('amount') as string)
+      finalNote = formData.get('note') as string
+
+      if (!finalAmount || finalAmount <= 0) {
+        toast.error('Please enter a valid amount')
+        setLoading(false)
+        return
+      }
+      if (!finalNote) {
+        toast.error('Note/Reason is mandatory')
+        setLoading(false)
+        return
+      }
     }
 
-    const res = await createBulkTransactions(Array.from(selectedUserIds), type, amount, note)
+    const res = await createBulkTransactions(Array.from(selectedUserIds), finalType, finalAmount, finalNote)
     
     if (res.error) {
       toast.error(res.error)
     } else {
-      toast.success(`Successfully processed ${type} of ₹${amount.toFixed(2)} for ${selectedUserIds.size} students`)
+      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUserIds.size} students`)
       setIsBulkDialogOpen(false)
-      setSelectedUserIds(new Set()) // Clear selection on success
+      setSelectedUserIds(new Set())
     }
     setLoading(false)
   }
@@ -338,37 +403,58 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
                 <Label htmlFor="type">Transaction Type</Label>
-                <Select name="type" defaultValue="deposit" required>
+                <Select name="type" value={txType} onValueChange={(v) => v && setTxType(v)} required>
                   <SelectTrigger id="type">
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="deposit">Deposit (+)</SelectItem>
                     <SelectItem value="deduction">Deduction (-)</SelectItem>
+                    <SelectItem value="correction">Error Correction (±)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="amount">Amount (₹)</Label>
-                <Input
-                  id="amount"
-                  name="amount"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="note">Note / Reason</Label>
-                <Input
-                  id="note"
-                  name="note"
-                  type="text"
-                  placeholder="e.g. 15 pages DSA Lab Manual"
-                  required
-                />
-              </div>
+              
+              {txType === 'correction' ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="mistakeType">Mistake was a...</Label>
+                    <Select name="mistakeType" defaultValue="deposit" required>
+                      <SelectTrigger id="mistakeType">
+                        <SelectValue placeholder="Select mistake type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="deposit">Deposit</SelectItem>
+                        <SelectItem value="deduction">Deduction</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="originalAmount">Original (Incorrect) ₹</Label>
+                      <Input id="originalAmount" name="originalAmount" type="number" step="0.01" min="0.01" required />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="correctAmount">True Correct Amount ₹</Label>
+                      <Input id="correctAmount" name="correctAmount" type="number" step="0.01" min="0.01" required />
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-md">
+                    System will auto-calculate the difference and post a correction transaction with a detailed note for the student.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="amount">Amount (₹)</Label>
+                    <Input id="amount" name="amount" type="number" step="0.01" min="0.01" required />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="note">Note / Reason</Label>
+                    <Input id="note" name="note" type="text" placeholder="e.g. 15 pages DSA Lab Manual" required />
+                  </div>
+                </>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} disabled={loading}>
@@ -395,37 +481,58 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
                 <Label htmlFor="bulk-type">Transaction Type</Label>
-                <Select name="type" defaultValue="deposit" required>
+                <Select name="type" value={bulkTxType} onValueChange={(v) => v && setBulkTxType(v)} required>
                   <SelectTrigger id="bulk-type">
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="deposit">Deposit (+)</SelectItem>
                     <SelectItem value="deduction">Deduction (-)</SelectItem>
+                    <SelectItem value="correction">Error Correction (±)</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="grid gap-2">
-                <Label htmlFor="bulk-amount">Amount per Student (₹)</Label>
-                <Input
-                  id="bulk-amount"
-                  name="amount"
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  required
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor="bulk-note">Note / Reason</Label>
-                <Input
-                  id="bulk-note"
-                  name="note"
-                  type="text"
-                  placeholder="e.g. Workshop fee deduction"
-                  required
-                />
-              </div>
+
+              {bulkTxType === 'correction' ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="bulk-mistakeType">Mistake was a...</Label>
+                    <Select name="mistakeType" defaultValue="deposit" required>
+                      <SelectTrigger id="bulk-mistakeType">
+                        <SelectValue placeholder="Select mistake type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="deposit">Deposit</SelectItem>
+                        <SelectItem value="deduction">Deduction</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="grid gap-2">
+                      <Label htmlFor="bulk-originalAmount">Original (Incorrect) ₹</Label>
+                      <Input id="bulk-originalAmount" name="originalAmount" type="number" step="0.01" min="0.01" required />
+                    </div>
+                    <div className="grid gap-2">
+                      <Label htmlFor="bulk-correctAmount">True Correct Amount ₹</Label>
+                      <Input id="bulk-correctAmount" name="correctAmount" type="number" step="0.01" min="0.01" required />
+                    </div>
+                  </div>
+                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-md">
+                    System will auto-calculate the difference and post a correction transaction with a detailed note for the students.
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor="bulk-amount">Amount per Student (₹)</Label>
+                    <Input id="bulk-amount" name="amount" type="number" step="0.01" min="0.01" required />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="bulk-note">Note / Reason</Label>
+                    <Input id="bulk-note" name="note" type="text" placeholder="e.g. Workshop fee deduction" required />
+                  </div>
+                </>
+              )}
             </div>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={() => setIsBulkDialogOpen(false)} disabled={loading}>
