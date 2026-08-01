@@ -10,8 +10,10 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { createTransaction, createBulkTransactions } from '../actions/transaction'
-import { Search } from 'lucide-react'
+import { Search, Users } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Textarea } from "@/components/ui/textarea"
+import Fuse from 'fuse.js'
 
 type Profile = {
   id: string;
@@ -25,6 +27,13 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false)
+  const [isBulkMatchDialogOpen, setIsBulkMatchDialogOpen] = useState(false)
+  const [bulkMatchText, setBulkMatchText] = useState('')
+  const [fuzzyMatches, setFuzzyMatches] = useState<Array<{
+    original: string;
+    matchedProfile: Profile | null;
+    selected: boolean;
+  }>>([])
   const [loading, setLoading] = useState(false)
   
   // Selection state
@@ -59,6 +68,41 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       newSelected.delete(id)
     }
     setSelectedUserIds(newSelected)
+  }
+
+  const handleBulkMatch = () => {
+    const names = bulkMatchText.split('\n').map(n => n.trim()).filter(n => n)
+    if (names.length === 0) return
+
+    const fuse = new Fuse(users, {
+      keys: ['full_name', 'email'],
+      threshold: 0.4,
+    })
+
+    const matches = names.map(name => {
+      const result = fuse.search(name)
+      return {
+        original: name,
+        matchedProfile: result.length > 0 ? result[0].item : null,
+        selected: result.length > 0
+      }
+    })
+
+    setFuzzyMatches(matches)
+  }
+
+  const confirmBulkMatch = () => {
+    const newSelected = new Set(selectedUserIds)
+    fuzzyMatches.forEach(m => {
+      if (m.selected && m.matchedProfile) {
+        newSelected.add(m.matchedProfile.id)
+      }
+    })
+    setSelectedUserIds(newSelected)
+    setIsBulkMatchDialogOpen(false)
+    setBulkMatchText('')
+    setFuzzyMatches([])
+    toast.success('Students added to selection')
   }
 
   const handleTransaction = async (formData: FormData) => {
@@ -184,6 +228,10 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             <CardTitle className="text-xl">Students Directory</CardTitle>
           </div>
           <div className="flex items-center gap-3">
+            <Button variant="outline" size="sm" className="h-9 rounded-full px-4 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30" onClick={() => setIsBulkMatchDialogOpen(true)}>
+              <Users className="w-4 h-4 mr-2" />
+              Bulk Select
+            </Button>
             <div className="relative w-64">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-indigo-500" />
               <Input
@@ -388,6 +436,69 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+      {/* Bulk Match Dialog */}
+      <Dialog open={isBulkMatchDialogOpen} onOpenChange={(open) => {
+        setIsBulkMatchDialogOpen(open)
+        if (!open) {
+          setBulkMatchText('')
+          setFuzzyMatches([])
+        }
+      }}>
+        <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle>Bulk Fuzzy Select</DialogTitle>
+            <DialogDescription>
+              Paste a list of names or emails (one per line). The system will find the closest match.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-4 space-y-4">
+            {fuzzyMatches.length === 0 ? (
+              <div className="space-y-2">
+                <Textarea 
+                  placeholder="John Doe&#10;Jane Smith&#10;..." 
+                  className="min-h-[200px]"
+                  value={bulkMatchText}
+                  onChange={(e) => setBulkMatchText(e.target.value)}
+                />
+                <Button onClick={handleBulkMatch} className="w-full">Find Matches</Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="border rounded-md divide-y max-h-[400px] overflow-y-auto">
+                  {fuzzyMatches.map((match, idx) => (
+                    <div key={idx} className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-zinc-800/50">
+                      <div className="space-y-1">
+                        <div className="text-sm font-medium">Pasted: <span className="text-slate-500">{match.original}</span></div>
+                        <div className="text-sm">
+                          Match: {match.matchedProfile ? (
+                            <span className="font-semibold text-green-600 dark:text-green-400">{match.matchedProfile.full_name}</span>
+                          ) : (
+                            <span className="text-red-500">No match found</span>
+                          )}
+                        </div>
+                      </div>
+                      {match.matchedProfile && (
+                        <Checkbox 
+                          checked={match.selected}
+                          onCheckedChange={(c) => {
+                            const newMatches = [...fuzzyMatches]
+                            newMatches[idx].selected = !!c
+                            setFuzzyMatches(newMatches)
+                          }}
+                        />
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <Button variant="outline" onClick={() => setFuzzyMatches([])}>Back</Button>
+                  <Button onClick={confirmBulkMatch}>Add to Selection</Button>
+                </div>
+              </div>
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </div>
