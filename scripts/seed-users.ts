@@ -46,7 +46,7 @@ const rawUsers = [
   "devisettyvignesh@gmail.com",
   "Rahul Shah <shahrahul39421@gmail.com>",
   "suraj.soni236456@gmail.com",
-  "sohailgulbaragaa@gmail.com",
+  "sohailgulbargaa@gmail.com",
   "Surya Vamshi Kusam <suryavamshi42323@gmail.com>",
   "Shivam Deshmukh <shivamdeshmukh835@gmail.com>",
   "tharunsmile128@gmail.com",
