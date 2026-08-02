@@ -646,116 +646,125 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       </Dialog>
       {/* Student Transaction History Modal */}
       <Dialog open={isHistoryDialogOpen} onOpenChange={setIsHistoryDialogOpen}>
-        <DialogContent className="sm:max-w-[700px] max-h-[85vh] flex flex-col p-0 overflow-hidden">
-          <DialogHeader className="p-6 pb-4 border-b border-zinc-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50">
-            <div className="flex items-start justify-between pr-6">
-              <div>
-                <DialogTitle className="text-xl font-bold flex items-center gap-2">
-                  <ReceiptText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
-                  {historyUser?.full_name}'s Ledger History
-                </DialogTitle>
-                <DialogDescription className="text-sm text-slate-500 mt-1">
-                  {historyUser?.email}
-                </DialogDescription>
+        <DialogContent className="sm:max-w-4xl max-w-4xl w-[95vw] max-h-[88vh] flex flex-col p-0 overflow-hidden rounded-2xl shadow-2xl border-slate-200 dark:border-zinc-800">
+          <DialogHeader className="p-6 pb-5 border-b border-slate-200/80 dark:border-zinc-800 bg-gradient-to-r from-slate-50 via-indigo-50/20 to-white dark:from-zinc-900 dark:via-zinc-900/50 dark:to-zinc-950">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pr-6">
+              <div className="flex items-center gap-3.5">
+                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white font-bold text-lg flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-none">
+                  {historyUser?.full_name?.charAt(0).toUpperCase() || 'S'}
+                </div>
+                <div>
+                  <DialogTitle className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                    {historyUser?.full_name}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
+                    {historyUser?.email}
+                  </DialogDescription>
+                </div>
               </div>
+
               {historyUser && (
-                <div className="text-right">
-                  <span className="text-xs text-slate-400 block mb-0.5">Current Balance</span>
-                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${
-                    historyUser.current_balance > 50 
-                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
-                      : historyUser.current_balance > 0 
-                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' 
-                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
-                  }`}>
-                    ₹{parseFloat(historyUser.current_balance as unknown as string).toFixed(2)}
-                  </span>
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 shadow-sm text-right">
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">Balance</span>
+                    <span className={`text-sm font-extrabold ${
+                      historyUser.current_balance > 50 
+                        ? 'text-emerald-600 dark:text-emerald-400' 
+                        : historyUser.current_balance > 0 
+                          ? 'text-amber-600 dark:text-amber-400' 
+                          : 'text-rose-600 dark:text-rose-400'
+                    }`}>
+                      ₹{parseFloat(historyUser.current_balance as unknown as string).toFixed(2)}
+                    </span>
+                  </div>
                 </div>
               )}
             </div>
           </DialogHeader>
 
-          <div className="flex-1 overflow-y-auto p-6 pt-2">
+          <div className="flex-1 overflow-y-auto p-6 bg-slate-50/40 dark:bg-zinc-950/40">
             {historyLoading ? (
-              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
-                <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mb-3" />
-                <p className="text-sm font-medium">Loading transaction records...</p>
+              <div className="flex flex-col items-center justify-center py-20 text-slate-400">
+                <Loader2 className="w-9 h-9 animate-spin text-indigo-600 mb-3" />
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Loading ledger records...</p>
               </div>
             ) : userTransactions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-16 text-center">
-                <div className="w-14 h-14 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-3">
-                  <ReceiptText className="w-7 h-7 text-muted-foreground opacity-50" />
+              <div className="flex flex-col items-center justify-center py-20 text-center bg-white dark:bg-zinc-900 rounded-xl border border-dashed border-slate-200 dark:border-zinc-800">
+                <div className="w-14 h-14 bg-indigo-50 dark:bg-indigo-950/50 rounded-2xl flex items-center justify-center mb-3">
+                  <ReceiptText className="w-7 h-7 text-indigo-600 dark:text-indigo-400" />
                 </div>
-                <h4 className="text-base font-semibold text-slate-800 dark:text-slate-200">No transactions recorded</h4>
-                <p className="text-sm text-muted-foreground mt-1">This student has not performed any deposits or print transactions yet.</p>
+                <h4 className="text-base font-semibold text-slate-800 dark:text-slate-200">No transaction records found</h4>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm">No deposits or printing deductions have been made for this student yet.</p>
               </div>
             ) : (
-              <div className="border rounded-lg overflow-hidden dark:border-zinc-800">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-slate-50/80 dark:bg-zinc-800/80 border-b border-zinc-200 dark:border-zinc-800">
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 pl-4">Date & Time</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3">Type</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3">Note / Reason</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 text-right">Amount</TableHead>
-                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 text-right pr-4">Balance After</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {userTransactions.map((tx) => {
-                      const isCorrection = tx.note?.startsWith('Correction by Admin:') || tx.note?.toLowerCase().includes('correction')
-                      return (
-                        <TableRow key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800/50">
-                          <TableCell className="pl-4 py-3 text-xs font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">
-                            {format(new Date(tx.created_at), 'MMM d, yyyy • h:mm a')}
-                          </TableCell>
-                          <TableCell className="py-3">
-                            {isCorrection ? (
-                              <Badge 
-                                variant="outline" 
-                                className="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400 font-medium text-[11px]"
-                              >
-                                Correction
-                              </Badge>
-                            ) : (
-                              <Badge 
-                                variant="outline" 
-                                className={tx.type === 'deposit' 
-                                  ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400 font-medium text-[11px]' 
-                                  : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400 font-medium text-[11px]'
-                                }
-                              >
-                                {tx.type === 'deposit' ? 'Deposit' : 'Deduction'}
-                              </Badge>
-                            )}
-                          </TableCell>
-                          <TableCell className="py-3 text-xs text-slate-600 dark:text-slate-400 max-w-[220px] break-words">
-                            {tx.note}
-                          </TableCell>
-                          <TableCell className={`py-3 text-right text-xs font-bold whitespace-nowrap ${
-                            isCorrection
-                              ? (tx.type === 'deposit' ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-500')
-                              : (tx.type === 'deposit' ? 'text-green-600 dark:text-green-500' : 'text-slate-900 dark:text-white')
-                          }`}>
-                            {tx.type === 'deposit' ? '+' : '-'}₹{parseFloat(tx.amount as unknown as string).toFixed(2)}
-                          </TableCell>
-                          <TableCell className="pr-4 py-3 text-right text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">
-                            ₹{parseFloat(tx.balance_after as unknown as string).toFixed(2)}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </TableBody>
-                </Table>
+              <div className="border border-slate-200/80 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
+                <div className="overflow-x-auto">
+                  <Table className="w-full border-collapse">
+                    <TableHeader>
+                      <TableRow className="bg-slate-100/75 dark:bg-zinc-800/80 border-b border-slate-200 dark:border-zinc-800">
+                        <TableHead className="w-[170px] min-w-[170px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pl-4">Date & Time</TableHead>
+                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-3">Type</TableHead>
+                        <TableHead className="min-w-[260px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4">Note / Reason</TableHead>
+                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4 text-right">Amount</TableHead>
+                        <TableHead className="w-[130px] min-w-[130px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pr-5 pl-2 text-right">Balance After</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
+                      {userTransactions.map((tx) => {
+                        const isCorrection = tx.note?.startsWith('Correction by Admin:') || tx.note?.toLowerCase().includes('correction')
+                        return (
+                          <TableRow key={tx.id} className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/50 transition-colors">
+                            <TableCell className="pl-4 py-3.5 text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap align-top">
+                              {format(new Date(tx.created_at), 'MMM d, yyyy • h:mm a')}
+                            </TableCell>
+                            <TableCell className="px-3 py-3.5 align-top whitespace-nowrap">
+                              {isCorrection ? (
+                                <Badge 
+                                  variant="outline" 
+                                  className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md"
+                                >
+                                  Correction
+                                </Badge>
+                              ) : (
+                                <Badge 
+                                  variant="outline" 
+                                  className={tx.type === 'deposit' 
+                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md' 
+                                    : 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md'
+                                  }
+                                >
+                                  {tx.type === 'deposit' ? '+ Deposit' : '- Deduction'}
+                                </Badge>
+                              )}
+                            </TableCell>
+                            <TableCell className="px-4 py-3.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed break-words align-top">
+                              {tx.note}
+                            </TableCell>
+                            <TableCell className={`px-4 py-3.5 text-right text-xs font-mono font-bold whitespace-nowrap align-top ${
+                              isCorrection
+                                ? (tx.type === 'deposit' ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-500')
+                                : (tx.type === 'deposit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white')
+                            }`}>
+                              {tx.type === 'deposit' ? '+' : '-'}₹{parseFloat(tx.amount as unknown as string).toFixed(2)}
+                            </TableCell>
+                            <TableCell className="pr-5 pl-2 py-3.5 text-right text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap align-top">
+                              ₹{parseFloat(tx.balance_after as unknown as string).toFixed(2)}
+                            </TableCell>
+                          </TableRow>
+                        )
+                      })}
+                    </TableBody>
+                  </Table>
+                </div>
               </div>
             )}
           </div>
 
-          <DialogFooter className="p-4 border-t border-zinc-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 flex justify-between items-center sm:justify-between">
-            <span className="text-xs text-slate-500">
-              Total {userTransactions.length} transaction{userTransactions.length === 1 ? '' : 's'}
+          <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-zinc-800 bg-slate-50/80 dark:bg-zinc-900/80 flex items-center justify-between sm:justify-between">
+            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              Showing {userTransactions.length} recorded transaction{userTransactions.length === 1 ? '' : 's'}
             </span>
-            <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)}>
+            <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
               Close
             </Button>
           </DialogFooter>
