@@ -9,10 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { createTransaction, createBulkTransactions } from '../actions/transaction'
-import { Search, Users } from 'lucide-react'
+import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
+import { Search, Users, ReceiptText, Loader2 } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
+import { Badge } from "@/components/ui/badge"
+import { format } from "date-fns"
 import Fuse from 'fuse.js'
 
 type Profile = {
@@ -39,6 +41,12 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [txType, setTxType] = useState<string>('deposit')
   const [bulkTxType, setBulkTxType] = useState<string>('deposit')
   
+  // History modal state
+  const [historyUser, setHistoryUser] = useState<Profile | null>(null)
+  const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
+  const [userTransactions, setUserTransactions] = useState<any[]>([])
+  const [historyLoading, setHistoryLoading] = useState(false)
+
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
@@ -52,6 +60,19 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const handleOpenDialog = (user: Profile) => {
     setSelectedUser(user)
     setIsDialogOpen(true)
+  }
+
+  const handleOpenHistory = async (user: Profile) => {
+    setHistoryUser(user)
+    setIsHistoryDialogOpen(true)
+    setHistoryLoading(true)
+    const res = await getUserTransactions(user.id)
+    if (res.error) {
+      toast.error('Failed to load transaction history')
+    } else {
+      setUserTransactions(res.transactions)
+    }
+    setHistoryLoading(false)
   }
 
   const handleSelectAll = (checked: boolean) => {
@@ -369,17 +390,32 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                         </span>
                       </TableCell>
                       <TableCell className="pr-6 py-3 text-right">
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950 px-3 rounded-full border border-indigo-200 dark:border-indigo-800/50" 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleOpenDialog(u);
-                          }}
-                        >
-                          Transact
-                        </Button>
+                        <div className="flex items-center justify-end gap-2">
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-8 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-zinc-800 px-2.5 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center gap-1.5" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenHistory(u);
+                            }}
+                            title="View Transaction History"
+                          >
+                            <ReceiptText className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
+                            History
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950 px-3 rounded-full border border-indigo-200 dark:border-indigo-800/50" 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDialog(u);
+                            }}
+                          >
+                            Transact
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -606,6 +642,123 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               </div>
             )}
           </div>
+        </DialogContent>
+      </Dialog>
+      {/* Student Transaction History Modal */}
+      <Dialog open={isHistoryDialogOpen} onOpenChange={setIsHistoryDialogOpen}>
+        <DialogContent className="sm:max-w-[700px] max-h-[85vh] flex flex-col p-0 overflow-hidden">
+          <DialogHeader className="p-6 pb-4 border-b border-zinc-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50">
+            <div className="flex items-start justify-between pr-6">
+              <div>
+                <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                  <ReceiptText className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  {historyUser?.full_name}'s Ledger History
+                </DialogTitle>
+                <DialogDescription className="text-sm text-slate-500 mt-1">
+                  {historyUser?.email}
+                </DialogDescription>
+              </div>
+              {historyUser && (
+                <div className="text-right">
+                  <span className="text-xs text-slate-400 block mb-0.5">Current Balance</span>
+                  <span className={`inline-flex items-center px-3 py-1 rounded-full text-sm font-bold ${
+                    historyUser.current_balance > 50 
+                      ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' 
+                      : historyUser.current_balance > 0 
+                        ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' 
+                        : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                  }`}>
+                    ₹{parseFloat(historyUser.current_balance as unknown as string).toFixed(2)}
+                  </span>
+                </div>
+              )}
+            </div>
+          </DialogHeader>
+
+          <div className="flex-1 overflow-y-auto p-6 pt-2">
+            {historyLoading ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+                <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mb-3" />
+                <p className="text-sm font-medium">Loading transaction records...</p>
+              </div>
+            ) : userTransactions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <div className="w-14 h-14 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-3">
+                  <ReceiptText className="w-7 h-7 text-muted-foreground opacity-50" />
+                </div>
+                <h4 className="text-base font-semibold text-slate-800 dark:text-slate-200">No transactions recorded</h4>
+                <p className="text-sm text-muted-foreground mt-1">This student has not performed any deposits or print transactions yet.</p>
+              </div>
+            ) : (
+              <div className="border rounded-lg overflow-hidden dark:border-zinc-800">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50/80 dark:bg-zinc-800/80 border-b border-zinc-200 dark:border-zinc-800">
+                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 pl-4">Date & Time</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3">Type</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3">Note / Reason</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 text-right">Amount</TableHead>
+                      <TableHead className="text-xs font-semibold uppercase text-slate-500 py-3 text-right pr-4">Balance After</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {userTransactions.map((tx) => {
+                      const isCorrection = tx.note?.startsWith('Correction by Admin:') || tx.note?.toLowerCase().includes('correction')
+                      return (
+                        <TableRow key={tx.id} className="hover:bg-slate-50/60 dark:hover:bg-zinc-800/40 border-b border-zinc-100 dark:border-zinc-800/50">
+                          <TableCell className="pl-4 py-3 text-xs font-medium text-slate-700 dark:text-slate-300 whitespace-nowrap">
+                            {format(new Date(tx.created_at), 'MMM d, yyyy • h:mm a')}
+                          </TableCell>
+                          <TableCell className="py-3">
+                            {isCorrection ? (
+                              <Badge 
+                                variant="outline" 
+                                className="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400 font-medium text-[11px]"
+                              >
+                                Correction
+                              </Badge>
+                            ) : (
+                              <Badge 
+                                variant="outline" 
+                                className={tx.type === 'deposit' 
+                                  ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400 font-medium text-[11px]' 
+                                  : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400 font-medium text-[11px]'
+                                }
+                              >
+                                {tx.type === 'deposit' ? 'Deposit' : 'Deduction'}
+                              </Badge>
+                            )}
+                          </TableCell>
+                          <TableCell className="py-3 text-xs text-slate-600 dark:text-slate-400 max-w-[220px] break-words">
+                            {tx.note}
+                          </TableCell>
+                          <TableCell className={`py-3 text-right text-xs font-bold whitespace-nowrap ${
+                            isCorrection
+                              ? (tx.type === 'deposit' ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-500')
+                              : (tx.type === 'deposit' ? 'text-green-600 dark:text-green-500' : 'text-slate-900 dark:text-white')
+                          }`}>
+                            {tx.type === 'deposit' ? '+' : '-'}₹{parseFloat(tx.amount as unknown as string).toFixed(2)}
+                          </TableCell>
+                          <TableCell className="pr-4 py-3 text-right text-xs font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                            ₹{parseFloat(tx.balance_after as unknown as string).toFixed(2)}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </TableBody>
+                </Table>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter className="p-4 border-t border-zinc-100 dark:border-zinc-800 bg-slate-50/50 dark:bg-zinc-900/50 flex justify-between items-center sm:justify-between">
+            <span className="text-xs text-slate-500">
+              Total {userTransactions.length} transaction{userTransactions.length === 1 ? '' : 's'}
+            </span>
+            <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)}>
+              Close
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

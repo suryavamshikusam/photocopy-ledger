@@ -57,3 +57,20 @@ export async function createBulkTransactions(userIds: string[], type: 'deposit' 
   revalidatePath('/admin')
   return { success: true }
 }
+
+export async function getUserTransactions(userId: string) {
+  const supabase = await createClient()
+
+  const { data, error } = await supabase
+    .from('transactions')
+    .select('*')
+    .eq('user_id', userId)
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error('Error fetching user transactions:', error)
+    return { transactions: [], error: error.message }
+  }
+
+  return { transactions: data || [], error: null }
+}
