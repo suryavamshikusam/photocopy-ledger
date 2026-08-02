@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
-import { Search, Users, ReceiptText, Loader2 } from 'lucide-react'
+import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -26,6 +26,8 @@ type Profile = {
 
 export default function AdminClient({ users, metrics }: { users: Profile[], metrics: any }) {
   const [searchTerm, setSearchTerm] = useState('')
+  const [balanceFilter, setBalanceFilter] = useState<string>('all')
+  const [balanceSortOrder, setBalanceSortOrder] = useState<'none' | 'asc' | 'desc'>('none')
   const [selectedUser, setSelectedUser] = useState<Profile | null>(null)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false)
@@ -51,11 +53,32 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
   const filteredUsers = useMemo(() => {
-    return users.filter(u => 
-      u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      u.email.toLowerCase().includes(searchTerm.toLowerCase())
-    )
-  }, [users, searchTerm])
+    let result = users.filter(u => {
+      const matchesSearch = 
+        u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+        u.email.toLowerCase().includes(searchTerm.toLowerCase())
+      
+      if (!matchesSearch) return false
+
+      const bal = parseFloat(u.current_balance as unknown as string) || 0
+      if (balanceFilter === 'low') {
+        return bal < 50
+      } else if (balanceFilter === 'critical') {
+        return bal <= 0
+      } else if (balanceFilter === 'healthy') {
+        return bal >= 50
+      }
+      return true
+    })
+
+    if (balanceSortOrder === 'asc') {
+      result = [...result].sort((a, b) => (parseFloat(a.current_balance as unknown as string) || 0) - (parseFloat(b.current_balance as unknown as string) || 0))
+    } else if (balanceSortOrder === 'desc') {
+      result = [...result].sort((a, b) => (parseFloat(b.current_balance as unknown as string) || 0) - (parseFloat(a.current_balance as unknown as string) || 0))
+    }
+
+    return result
+  }, [users, searchTerm, balanceFilter, balanceSortOrder])
 
   const handleOpenDialog = (user: Profile) => {
     setSelectedUser(user)
@@ -295,41 +318,89 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-md bg-gradient-to-br from-orange-500/10 to-orange-600/5 dark:from-orange-500/20 dark:to-orange-900/10 backdrop-blur-sm relative overflow-hidden">
+        <Card 
+          onClick={() => setBalanceFilter(prev => prev === 'low' ? 'all' : 'low')}
+          className={`border-0 shadow-md bg-gradient-to-br from-orange-500/10 to-orange-600/5 dark:from-orange-500/20 dark:to-orange-900/10 backdrop-blur-sm relative overflow-hidden cursor-pointer transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] ${
+            balanceFilter === 'low' ? 'ring-2 ring-orange-500 shadow-orange-500/20 bg-orange-500/15' : ''
+          }`}
+        >
           <div className="absolute top-0 right-0 p-4 opacity-10">
             <svg className="w-16 h-16 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
           </div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 relative z-10">
-            <CardTitle className="text-sm font-medium text-orange-800 dark:text-orange-300">Low Balance (&lt; ₹50)</CardTitle>
+            <CardTitle className="text-sm font-medium text-orange-800 dark:text-orange-300 flex items-center gap-1.5">
+              <span>Low Balance (&lt; ₹50)</span>
+              {balanceFilter === 'low' && (
+                <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300 font-semibold">
+                  Filtered
+                </Badge>
+              )}
+            </CardTitle>
           </CardHeader>
-          <CardContent className="relative z-10">
+          <CardContent className="relative z-10 flex items-baseline justify-between">
             <div className="text-3xl font-extrabold text-orange-600 dark:text-orange-400">{metrics.lowBalanceCount}</div>
+            <span className="text-xs text-orange-700 dark:text-orange-300 font-medium">
+              {balanceFilter === 'low' ? '✕ Reset' : 'Click to filter'}
+            </span>
           </CardContent>
         </Card>
       </div>
 
       <Card className="border-0 shadow-lg shadow-zinc-200/50 dark:shadow-none dark:border dark:border-zinc-800 bg-white/70 dark:bg-zinc-900/70 backdrop-blur-md">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4 border-b border-zinc-100 dark:border-zinc-800/50">
+        <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-zinc-100 dark:border-zinc-800/50">
           <div>
-            <CardTitle className="text-xl">Students Directory</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle className="text-xl">Students Directory</CardTitle>
+              <Badge variant="secondary" className="text-xs font-semibold">
+                {filteredUsers.length} {filteredUsers.length === 1 ? 'student' : 'students'}
+              </Badge>
+            </div>
+            {balanceFilter !== 'all' && (
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className="text-xs text-slate-500">Filtered by:</span>
+                <Badge 
+                  variant="outline" 
+                  className="text-xs font-medium bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-1 cursor-pointer hover:bg-amber-100 transition-colors"
+                  onClick={() => setBalanceFilter('all')}
+                >
+                  {balanceFilter === 'low' && 'Low Balance (< ₹50)'}
+                  {balanceFilter === 'critical' && 'Zero/Negative (≤ ₹0)'}
+                  {balanceFilter === 'healthy' && 'Healthy (≥ ₹50)'}
+                  <X className="w-3 h-3 ml-0.5" />
+                </Badge>
+              </div>
+            )}
           </div>
-          <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" className="h-9 rounded-full px-4 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30" onClick={() => setIsBulkMatchDialogOpen(true)}>
-              <Users className="w-4 h-4 mr-2" />
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <Select value={balanceFilter} onValueChange={(val) => setBalanceFilter(val || 'all')}>
+              <SelectTrigger className="w-[170px] h-9 text-xs font-medium rounded-full bg-white/70 dark:bg-zinc-800/70 border-zinc-200 dark:border-zinc-700 shadow-sm">
+                <Filter className="w-3.5 h-3.5 mr-1.5 text-indigo-500" />
+                <SelectValue placeholder="Filter balance" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all" className="text-xs">All Balances</SelectItem>
+                <SelectItem value="low" className="text-xs text-orange-600 dark:text-orange-400 font-medium">⚠️ Low Balance (&lt; ₹50)</SelectItem>
+                <SelectItem value="critical" className="text-xs text-rose-600 dark:text-rose-400 font-medium">🚫 Critical (&le; ₹0)</SelectItem>
+                <SelectItem value="healthy" className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">✅ Healthy (&ge; ₹50)</SelectItem>
+              </SelectContent>
+            </Select>
+
+            <Button variant="outline" size="sm" className="h-9 rounded-full px-3.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30 text-xs" onClick={() => setIsBulkMatchDialogOpen(true)}>
+              <Users className="w-3.5 h-3.5 mr-1.5" />
               Bulk Select
             </Button>
-            <div className="relative w-64">
+            <div className="relative w-56 sm:w-60">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-indigo-500" />
               <Input
                 type="search"
-                placeholder="Search by name or email..."
-                className="pl-9 h-9 text-sm bg-white/50 dark:bg-zinc-800/50 border-zinc-200 dark:border-zinc-700 rounded-full shadow-inner"
+                placeholder="Search name or email..."
+                className="pl-9 h-9 text-xs bg-white/50 dark:bg-zinc-800/50 border-zinc-200 dark:border-zinc-700 rounded-full shadow-inner"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />
             </div>
             {selectedUserIds.size > 0 && (
-              <Button size="sm" className="h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 px-4" onClick={() => setIsBulkDialogOpen(true)}>
+              <Button size="sm" className="h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 px-4 text-xs font-semibold" onClick={() => setIsBulkDialogOpen(true)}>
                 Bulk Action ({selectedUserIds.size})
               </Button>
             )}
@@ -349,7 +420,20 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                 </TableHead>
                 <TableHead className="h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Name</TableHead>
                 <TableHead className="h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Email</TableHead>
-                <TableHead className="text-right h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Balance</TableHead>
+                <TableHead 
+                  className="text-right h-12 text-xs font-semibold tracking-wide uppercase text-slate-500 cursor-pointer select-none hover:text-indigo-600 transition-colors"
+                  onClick={() => {
+                    setBalanceSortOrder(prev => prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none')
+                  }}
+                  title="Click to sort by balance"
+                >
+                  <div className="inline-flex items-center gap-1 justify-end">
+                    <span>Balance</span>
+                    {balanceSortOrder === 'none' && <ArrowUpDown className="w-3 h-3 text-slate-400" />}
+                    {balanceSortOrder === 'asc' && <ArrowUp className="w-3 h-3 text-indigo-600 dark:text-indigo-400 font-bold" />}
+                    {balanceSortOrder === 'desc' && <ArrowDown className="w-3 h-3 text-indigo-600 dark:text-indigo-400 font-bold" />}
+                  </div>
+                </TableHead>
                 <TableHead className="text-right pr-6 h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Actions</TableHead>
               </TableRow>
             </TableHeader>
@@ -361,7 +445,20 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                       <div className="w-12 h-12 bg-zinc-100 dark:bg-zinc-800 rounded-full flex items-center justify-center mb-3">
                         <Search className="w-6 h-6 text-muted-foreground opacity-50" />
                       </div>
-                      <p className="text-slate-500 font-medium">No students found.</p>
+                      <p className="text-slate-600 dark:text-slate-300 font-medium">No students match the current filter.</p>
+                      {(balanceFilter !== 'all' || searchTerm) && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="mt-2 text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 text-xs"
+                          onClick={() => {
+                            setBalanceFilter('all')
+                            setSearchTerm('')
+                          }}
+                        >
+                          Reset Filters
+                        </Button>
+                      )}
                     </div>
                   </TableCell>
                 </TableRow>
