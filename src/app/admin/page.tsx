@@ -35,7 +35,7 @@ export default async function AdminPage() {
   // Fetch all transactions to calculate global metrics
   const { data: transactions } = await supabase
     .from('transactions')
-    .select('type, amount')
+    .select('type, amount, note')
 
   let totalDeposits = 0
   let totalSpent = 0
@@ -43,13 +43,43 @@ export default async function AdminPage() {
   if (transactions) {
     transactions.forEach(tx => {
       const amt = parseFloat(tx.amount)
-      if (tx.type === 'deposit') {
-        totalDeposits += amt
-      } else if (tx.type === 'deduction') {
-        totalSpent += amt
+      const note = tx.note || ''
+      const isCorrection = note.startsWith('Correction by Admin:') || note.toLowerCase().includes('correction')
+
+      if (isCorrection) {
+        // If the error was on a deposit
+        if (note.includes('entered as a deposit in error') || (!note.includes('entered as a deduction in error') && tx.type === 'deduction')) {
+          if (tx.type === 'deduction') {
+            // Over-deposited initially -> deducting the excess, so reduce totalDeposits (NOT counted as spent)
+            totalDeposits -= amt
+          } else {
+            // Under-deposited initially -> depositing the missing portion
+            totalDeposits += amt
+          }
+        } 
+        // If the error was on a deduction (actual printing spent)
+        else if (note.includes('entered as a deduction in error')) {
+          if (tx.type === 'deposit') {
+            // Over-deducted initially -> refunding the excess, so reduce totalSpent
+            totalSpent -= amt
+          } else {
+            // Under-deducted initially -> deducting the missing portion
+            totalSpent += amt
+          }
+        }
+      } else {
+        // Regular transactions
+        if (tx.type === 'deposit') {
+          totalDeposits += amt
+        } else if (tx.type === 'deduction') {
+          totalSpent += amt
+        }
       }
     })
   }
+
+  totalDeposits = Math.max(0, totalDeposits)
+  totalSpent = Math.max(0, totalSpent)
 
   let netBalance = 0
   let lowBalanceCount = 0

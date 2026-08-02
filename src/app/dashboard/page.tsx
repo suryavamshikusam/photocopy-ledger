@@ -143,18 +143,31 @@ export default async function DashboardPage() {
                         {format(new Date(tx.created_at), 'MMM d, yyyy • h:mm a')}
                       </TableCell>
                       <TableCell className="py-4">
-                        <Badge 
-                          variant="outline" 
-                          className={tx.type === 'deposit' 
-                            ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400 font-medium' 
-                            : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400 font-medium'
-                          }
-                        >
-                          {tx.type === 'deposit' ? 'Deposit' : 'Deduction'}
-                        </Badge>
+                        {tx.note?.startsWith('Correction by Admin:') || tx.note?.toLowerCase().includes('correction') ? (
+                          <Badge 
+                            variant="outline" 
+                            className="border-amber-200 bg-amber-50 text-amber-700 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-400 font-medium"
+                          >
+                            Correction
+                          </Badge>
+                        ) : (
+                          <Badge 
+                            variant="outline" 
+                            className={tx.type === 'deposit' 
+                              ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950 dark:text-green-400 font-medium' 
+                              : 'border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-400 font-medium'
+                            }
+                          >
+                            {tx.type === 'deposit' ? 'Deposit' : 'Deduction'}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell className="py-4 text-sm text-slate-600 dark:text-slate-400">{tx.note}</TableCell>
-                      <TableCell className={`py-4 text-right text-sm font-bold ${tx.type === 'deposit' ? 'text-green-600 dark:text-green-500' : 'text-slate-900 dark:text-white'}`}>
+                      <TableCell className={`py-4 text-right text-sm font-bold ${
+                        tx.note?.startsWith('Correction by Admin:')
+                          ? (tx.type === 'deposit' ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-500')
+                          : (tx.type === 'deposit' ? 'text-green-600 dark:text-green-500' : 'text-slate-900 dark:text-white')
+                      }`}>
                         {tx.type === 'deposit' ? '+' : '-'}₹{parseFloat(tx.amount).toFixed(2)}
                       </TableCell>
                       <TableCell className="pr-6 py-4 text-right text-sm font-semibold text-slate-500 dark:text-slate-400">
