@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { createTransaction, createBulkTransactions, getUserTransactions, sendTestEmailAction } from '../actions/transaction'
-import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Mail, Send, CheckCircle2, ShieldCheck, Sparkles, ExternalLink, AlertCircle } from 'lucide-react'
+import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
+import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -48,13 +48,6 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
   const [userTransactions, setUserTransactions] = useState<any[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
-
-  // Email Center state
-  const [isEmailDialogOpen, setIsEmailDialogOpen] = useState(false)
-  const [testEmailAddress, setTestEmailAddress] = useState('')
-  const [testEmailLoading, setTestEmailLoading] = useState(false)
-  const [testEmailResult, setTestEmailResult] = useState<{ success: boolean; message: string } | null>(null)
-  const [previewTxType, setPreviewTxType] = useState<'deposit' | 'deduction' | 'correction'>('deduction')
 
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
@@ -214,7 +207,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     if (res.error) {
       toast.error(res.error)
     } else {
-      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUser.full_name}. Official email receipt dispatched.`)
+      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUser.full_name}`)
       setIsDialogOpen(false)
     }
     setLoading(false)
@@ -275,7 +268,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     if (res.error) {
       toast.error(res.error)
     } else {
-      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUserIds.size} students. Email receipts dispatched.`)
+      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUserIds.size} students`)
       setIsBulkDialogOpen(false)
       setSelectedUserIds(new Set())
     }
@@ -391,19 +384,6 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                 <SelectItem value="healthy" className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">✅ Healthy (&ge; ₹50)</SelectItem>
               </SelectContent>
             </Select>
-
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="h-9 rounded-full px-3.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30 text-xs font-medium" 
-              onClick={() => {
-                setTestEmailResult(null)
-                setIsEmailDialogOpen(true)
-              }}
-            >
-              <Mail className="w-3.5 h-3.5 mr-1.5 text-indigo-600" />
-              Email Center
-            </Button>
 
             <Button variant="outline" size="sm" className="h-9 rounded-full px-3.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30 text-xs" onClick={() => setIsBulkMatchDialogOpen(true)}>
               <Users className="w-3.5 h-3.5 mr-1.5" />
@@ -883,323 +863,6 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             </span>
             <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
               Close
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-
-      {/* Email Center & Live Preview Modal */}
-      <Dialog open={isEmailDialogOpen} onOpenChange={setIsEmailDialogOpen}>
-        <DialogContent className="sm:max-w-4xl p-0 overflow-hidden border border-slate-200 dark:border-zinc-800 shadow-2xl rounded-2xl max-h-[90vh] flex flex-col">
-          <DialogHeader className="p-6 pb-4 bg-gradient-to-r from-indigo-900 via-indigo-800 to-slate-900 text-white">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-white/10 backdrop-blur-md flex items-center justify-center border border-white/20">
-                  <Mail className="w-5 h-5 text-indigo-200" />
-                </div>
-                <div>
-                  <DialogTitle className="text-xl font-bold text-white tracking-tight flex items-center gap-2">
-                    Official Email Generator & Live Preview
-                  </DialogTitle>
-                  <DialogDescription className="text-xs text-indigo-200/90 mt-0.5">
-                    Automated transactional receipts sent directly to students upon deduction or deposit.
-                  </DialogDescription>
-                </div>
-              </div>
-            </div>
-          </DialogHeader>
-
-          <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50/50 dark:bg-zinc-950/50">
-            {/* Anti-spam feature highlights */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="p-3.5 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xs flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 text-emerald-600 dark:text-emerald-400 mt-0.5">
-                  <CheckCircle2 className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">100% Primary Inbox</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    RFC-compliant headers & dual HTML/Plaintext format bypass spam filters.
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xs flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/50 text-indigo-600 dark:text-indigo-400 mt-0.5">
-                  <ExternalLink className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Direct Portal Track</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    "View Ledger" button directs students immediately to their passbook statement.
-                  </p>
-                </div>
-              </div>
-
-              <div className="p-3.5 rounded-xl bg-white dark:bg-zinc-900 border border-slate-200 dark:border-zinc-800 shadow-xs flex items-start gap-3">
-                <div className="p-2 rounded-lg bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 mt-0.5">
-                  <ShieldCheck className="w-4 h-4" />
-                </div>
-                <div>
-                  <h4 className="text-xs font-bold text-slate-800 dark:text-slate-200">Official Campus Badge</h4>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                    Displays Reference ID, remaining balance, and verified admin note.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* Live Test Sender Box */}
-            <div className="p-4 rounded-xl bg-indigo-50/70 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/60">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-                <div>
-                  <h4 className="text-sm font-bold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
-                    <Send className="w-4 h-4 text-indigo-600" />
-                    Send a Live Test Email to Your Inbox
-                  </h4>
-                  <p className="text-xs text-indigo-800/80 dark:text-indigo-300/70 mt-0.5">
-                    Test the delivery speed, anti-spam pass, and formatting on your real email.
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Input 
-                    type="email"
-                    placeholder="Enter your email address..."
-                    value={testEmailAddress}
-                    onChange={(e) => setTestEmailAddress(e.target.value)}
-                    className="h-9 text-xs w-64 bg-white dark:bg-zinc-900 border-indigo-200 dark:border-indigo-800"
-                  />
-                  <Button 
-                    size="sm" 
-                    disabled={testEmailLoading || !testEmailAddress}
-                    onClick={async () => {
-                      if (!testEmailAddress || !testEmailAddress.includes('@')) {
-                        toast.error('Please enter a valid email address')
-                        return
-                      }
-                      setTestEmailLoading(true)
-                      setTestEmailResult(null)
-                      try {
-                        const res = await sendTestEmailAction(testEmailAddress)
-                        setTestEmailResult(res)
-                        if (res.success) {
-                          toast.success(res.message)
-                        } else {
-                          toast.error(res.message)
-                        }
-                      } catch (err: any) {
-                        setTestEmailResult({ success: false, message: err?.message || 'Failed to dispatch test email' })
-                        toast.error('Failed to send test email')
-                      } finally {
-                        setTestEmailLoading(false)
-                      }
-                    }}
-                    className="h-9 px-4 text-xs font-semibold bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 whitespace-nowrap"
-                  >
-                    {testEmailLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1.5" /> : <Send className="w-3.5 h-3.5 mr-1.5" />}
-                    Send Test
-                  </Button>
-                </div>
-              </div>
-
-              {testEmailResult && (
-                <div className={`mt-3 p-3 rounded-lg text-xs font-medium flex items-start gap-2 ${
-                  testEmailResult.success 
-                    ? 'bg-emerald-100/80 text-emerald-900 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-300 dark:border-emerald-800' 
-                    : 'bg-rose-100/80 text-rose-900 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-300 dark:border-rose-800'
-                }`}>
-                  {testEmailResult.success ? <CheckCircle2 className="w-4 h-4 shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
-                  <div>
-                    <span className="font-bold">{testEmailResult.success ? 'Success: ' : 'Error: '}</span>
-                    {testEmailResult.message}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Email Template Preview Selector & Renderer */}
-            <div className="space-y-3">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Sparkles className="w-4 h-4 text-indigo-600" />
-                  <span className="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                    Live Visual Template Preview
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5 bg-slate-200/80 dark:bg-zinc-800/80 p-1 rounded-lg">
-                  <button 
-                    type="button"
-                    onClick={() => setPreviewTxType('deduction')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      previewTxType === 'deduction' 
-                        ? 'bg-white dark:bg-zinc-900 text-rose-600 dark:text-rose-400 shadow-xs' 
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    Deduction (Debit)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setPreviewTxType('deposit')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      previewTxType === 'deposit' 
-                        ? 'bg-white dark:bg-zinc-900 text-emerald-600 dark:text-emerald-400 shadow-xs' 
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    Deposit (Credit)
-                  </button>
-                  <button 
-                    type="button"
-                    onClick={() => setPreviewTxType('correction')}
-                    className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                      previewTxType === 'correction' 
-                        ? 'bg-white dark:bg-zinc-900 text-amber-600 dark:text-amber-400 shadow-xs' 
-                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
-                    }`}
-                  >
-                    Correction
-                  </button>
-                </div>
-              </div>
-
-              {/* Realistic Email Client Frame */}
-              <div className="border border-slate-300 dark:border-zinc-700 rounded-xl overflow-hidden bg-white shadow-lg">
-                {/* Email Client Header */}
-                <div className="bg-slate-100 dark:bg-zinc-800 p-3 border-b border-slate-200 dark:border-zinc-700 flex flex-col gap-1.5 text-xs">
-                  <div className="flex items-center justify-between text-slate-500">
-                    <div>
-                      <span className="font-semibold text-slate-700 dark:text-slate-300">From:</span> Photocopy Ledger &lt;notifications@campusledger.edu&gt;
-                    </div>
-                    <span className="text-[11px]">{format(new Date(), 'MMM d, yyyy • h:mm a')}</span>
-                  </div>
-                  <div className="text-slate-500">
-                    <span className="font-semibold text-slate-700 dark:text-slate-300">Subject:</span>{' '}
-                    <span className="font-bold text-slate-900 dark:text-white">
-                      {previewTxType === 'deposit' && '[Receipt] ₹100.00 Added to your Photocopy Account'}
-                      {previewTxType === 'deduction' && '[Receipt] ₹24.00 Deducted from your Photocopy Account'}
-                      {previewTxType === 'correction' && '[Account Update] Photocopy Ledger Balance Adjustment: ₹10.00'}
-                    </span>
-                  </div>
-                </div>
-
-                {/* Email Card Interior */}
-                <div className="p-6 md:p-8 bg-[#f1f5f9] flex justify-center">
-                  <div className="w-full max-w-[540px] bg-white rounded-2xl border border-slate-200 shadow-md overflow-hidden text-slate-800">
-                    {/* Header */}
-                    <div className="p-5 px-6 bg-gradient-to-r from-[#1e1b4b] to-[#312e81] text-white flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-white text-slate-900 flex items-center justify-center text-lg font-bold shadow-xs">
-                          🖨️
-                        </div>
-                        <div>
-                          <div className="font-bold text-sm tracking-tight text-white leading-tight">Photocopy Ledger</div>
-                        </div>
-                      </div>
-                      <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full bg-white/15 border border-white/20 text-white">
-                        Official Receipt
-                      </span>
-                    </div>
-
-                    {/* Body */}
-                    <div className="p-6 space-y-5">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">Hello <strong>Alex Johnson</strong>,</p>
-                        <p className="text-xs text-slate-500 mt-1">Here is your official transaction summary for your Photocopy account.</p>
-                      </div>
-
-                      {/* Badge Box */}
-                      <div className={`p-5 rounded-xl text-center border ${
-                        previewTxType === 'deposit' 
-                          ? 'bg-emerald-50/80 border-emerald-200 text-emerald-900' 
-                          : previewTxType === 'deduction' 
-                          ? 'bg-rose-50/80 border-rose-200 text-rose-900' 
-                          : 'bg-amber-50/80 border-amber-200 text-amber-900'
-                      }`}>
-                        <span className={`inline-block px-3 py-0.5 rounded-full text-[10px] font-bold tracking-wider uppercase border ${
-                          previewTxType === 'deposit' 
-                            ? 'bg-white text-emerald-800 border-emerald-200' 
-                            : previewTxType === 'deduction' 
-                            ? 'bg-white text-rose-800 border-rose-200' 
-                            : 'bg-white text-amber-800 border-amber-200'
-                        }`}>
-                          {previewTxType === 'deposit' && 'CREDIT • FUNDS ADDED'}
-                          {previewTxType === 'deduction' && 'DEBIT • PRINT / PHOTOCOPY'}
-                          {previewTxType === 'correction' && 'ADMIN ADJUSTMENT'}
-                        </span>
-                        
-                        <div className={`text-3xl font-extrabold tracking-tight mt-2 mb-1 ${
-                          previewTxType === 'deposit' 
-                            ? 'text-emerald-600' 
-                            : previewTxType === 'deduction' 
-                            ? 'text-rose-600' 
-                            : 'text-amber-600'
-                        }`}>
-                          {previewTxType === 'deposit' && '+₹100.00'}
-                          {previewTxType === 'deduction' && '-₹24.00'}
-                          {previewTxType === 'correction' && '₹10.00'}
-                        </div>
-
-                        <div className="text-xs text-slate-600 font-medium">
-                          Updated Balance: <strong className="text-slate-900 text-sm">₹{previewTxType === 'deposit' ? '180.00' : (previewTxType === 'deduction' ? '56.00' : '90.00')}</strong>
-                        </div>
-                      </div>
-
-                      {/* Detail table */}
-                      <div className="rounded-lg border border-slate-200 overflow-hidden text-xs divide-y divide-slate-200">
-                        <div className="p-2.5 px-3.5 bg-slate-50 flex justify-between">
-                          <span className="font-semibold text-slate-500 uppercase text-[10px]">Description / Note</span>
-                          <span className="font-semibold text-slate-900">
-                            {previewTxType === 'deposit' && 'Account Balance Recharge (Cash at Counter)'}
-                            {previewTxType === 'deduction' && '12 Pages B&W Photocopy + 2 Color Prints'}
-                            {previewTxType === 'correction' && 'Correction by Admin: Rectified mischarge'}
-                          </span>
-                        </div>
-                        <div className="p-2.5 px-3.5 flex justify-between">
-                          <span className="font-semibold text-slate-500 uppercase text-[10px]">Date & Time</span>
-                          <span className="text-slate-700">{format(new Date(), 'MMM d, yyyy • h:mm a')}</span>
-                        </div>
-                        <div className="p-2.5 px-3.5 bg-slate-50 flex justify-between">
-                          <span className="font-semibold text-slate-500 uppercase text-[10px]">Transaction Type</span>
-                          <span className={`font-bold ${
-                            previewTxType === 'deposit' ? 'text-emerald-600' : (previewTxType === 'deduction' ? 'text-rose-600' : 'text-amber-600')
-                          }`}>
-                            {previewTxType === 'deposit' ? 'Deposit' : (previewTxType === 'deduction' ? 'Deduction' : 'Correction')}
-                          </span>
-                        </div>
-                        <div className="p-2.5 px-3.5 flex justify-between">
-                          <span className="font-semibold text-slate-500 uppercase text-[10px]">Reference ID</span>
-                          <span className="font-mono text-slate-600 text-[11px]">TXN-SAMPLE88</span>
-                        </div>
-                      </div>
-
-                      {/* CTA Button */}
-                      <div className="pt-2 text-center">
-                        <span className="inline-block px-6 py-2.5 rounded-lg bg-gradient-to-r from-indigo-600 to-indigo-700 text-white font-bold text-xs shadow-md shadow-indigo-500/20 cursor-default">
-                          View Ledger & Statement &rarr;
-                        </span>
-                        <p className="text-[10px] text-slate-400 mt-2">
-                          Directly opens student dashboard on website for live transaction passbook.
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Footer */}
-                    <div className="p-4 px-6 bg-slate-50 border-t border-slate-200 text-center text-[10px] text-slate-500">
-                      Photocopy Ledger • Automated Receipt System
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="p-4 px-6 border-t border-slate-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex items-center justify-between sm:justify-between">
-            <span className="text-xs text-slate-500 dark:text-slate-400">
-              Emails are automatically dispatched on every add, deduct, or bulk action.
-            </span>
-            <Button variant="outline" size="sm" onClick={() => setIsEmailDialogOpen(false)} className="rounded-lg px-4">
-              Done
             </Button>
           </DialogFooter>
         </DialogContent>
