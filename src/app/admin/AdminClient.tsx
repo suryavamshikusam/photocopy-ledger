@@ -9,8 +9,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
-import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { createTransaction, createBulkTransactions, getUserTransactions, sendTestEmailAction } from '../actions/transaction'
+import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Mail, CheckCircle2, AlertCircle, Eye } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -38,6 +38,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     matchedProfile: Profile | null;
     selected: boolean;
   }>>([])
+  const [isEmailCenterOpen, setIsEmailCenterOpen] = useState(false)
+  const [testEmailRecipient, setTestEmailRecipient] = useState('')
+  const [isTestingEmail, setIsTestingEmail] = useState(false)
+  const [showPreviewModal, setShowPreviewModal] = useState(false)
+
   const [loading, setLoading] = useState(false)
   
   const [txType, setTxType] = useState<string>('deposit')
@@ -275,6 +280,28 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     setLoading(false)
   }
 
+  const handleSendTestEmail = async () => {
+    if (!testEmailRecipient || !testEmailRecipient.includes('@')) {
+      toast.error('Please enter a valid email address')
+      return
+    }
+
+    setIsTestingEmail(true)
+    try {
+      const res = await sendTestEmailAction(testEmailRecipient)
+      if (res.success) {
+        toast.success(`Test receipt email delivered successfully to ${testEmailRecipient}!`)
+      } else {
+        toast.error(`Failed to send test email: ${res.error || 'Check SMTP configuration'}`)
+      }
+    } catch (err: any) {
+      toast.error(`Error: ${err?.message || 'Failed to dispatch email'}`)
+    } finally {
+      setIsTestingEmail(false)
+    }
+  }
+
+
   const isAllSelected = filteredUsers.length > 0 && selectedUserIds.size === filteredUsers.length
   const isIndeterminate = selectedUserIds.size > 0 && selectedUserIds.size < filteredUsers.length
 
@@ -389,6 +416,17 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               <Users className="w-3.5 h-3.5 mr-1.5" />
               Bulk Select
             </Button>
+
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full px-3.5 border-emerald-200 text-emerald-700 hover:bg-emerald-50 dark:border-emerald-800 dark:text-emerald-400 dark:hover:bg-emerald-950/40 text-xs font-medium shadow-sm"
+              onClick={() => setIsEmailCenterOpen(true)}
+            >
+              <Mail className="w-3.5 h-3.5 mr-1.5 text-emerald-600 dark:text-emerald-400" />
+              Email Center
+            </Button>
+
             <div className="relative w-56 sm:w-60">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-indigo-500" />
               <Input
@@ -867,6 +905,194 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Email Center Dialog */}
+      <Dialog open={isEmailCenterOpen} onOpenChange={setIsEmailCenterOpen}>
+        <DialogContent className="max-w-xl bg-white dark:bg-zinc-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-zinc-800 p-0 overflow-hidden">
+          <div className="bg-gradient-to-r from-emerald-600 to-teal-700 p-6 text-white">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-white/15 rounded-xl backdrop-blur-sm">
+                <Mail className="w-6 h-6 text-white" />
+              </div>
+              <div>
+                <DialogTitle className="text-xl font-bold text-white">Transaction Email Center</DialogTitle>
+                <DialogDescription className="text-emerald-100 text-xs mt-0.5">
+                  Automated receipts via Gmail SMTP (Free delivery to any student email)
+                </DialogDescription>
+              </div>
+            </div>
+          </div>
+
+          <div className="p-6 space-y-5">
+            {/* Status overview */}
+            <div className="flex items-center justify-between p-4 bg-emerald-50/80 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-800/50">
+              <div className="flex items-center gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+                <div>
+                  <div className="text-xs font-semibold text-emerald-900 dark:text-emerald-200">
+                    Auto-Receipts Active & Ready
+                  </div>
+                  <div className="text-[11px] text-emerald-700 dark:text-emerald-400">
+                    Sends branded receipts on every deposit, deduction & bulk transaction.
+                  </div>
+                </div>
+              </div>
+              <Badge className="bg-emerald-600 hover:bg-emerald-600 text-white text-[10px] uppercase font-bold tracking-wider">
+                SMTP Live
+              </Badge>
+            </div>
+
+            {/* Test Email Dispatcher */}
+            <div className="space-y-3">
+              <Label className="text-xs font-bold text-slate-700 dark:text-slate-200 flex items-center justify-between">
+                <span>Send a Test Receipt</span>
+                <button 
+                  type="button"
+                  onClick={() => setShowPreviewModal(true)}
+                  className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 hover:underline flex items-center gap-1 cursor-pointer"
+                >
+                  <Eye className="w-3.5 h-3.5" />
+                  Preview Email Design
+                </button>
+              </Label>
+              
+              <div className="flex items-center gap-2">
+                <Input
+                  type="email"
+                  placeholder="Enter any recipient email (e.g. student@gmail.com)..."
+                  value={testEmailRecipient}
+                  onChange={(e) => setTestEmailRecipient(e.target.value)}
+                  className="h-10 text-xs rounded-xl bg-slate-50 dark:bg-zinc-800/80 border-slate-200 dark:border-zinc-700 focus-visible:ring-emerald-500"
+                />
+                <Button
+                  onClick={handleSendTestEmail}
+                  disabled={isTestingEmail || !testEmailRecipient}
+                  className="h-10 px-5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shrink-0 shadow-sm cursor-pointer"
+                >
+                  {isTestingEmail ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Mail className="w-3.5 h-3.5 mr-1.5" />
+                      Send Test
+                    </>
+                  )}
+                </Button>
+              </div>
+              <p className="text-[11px] text-slate-500">
+                Type any email to receive a live sample receipt in that inbox within seconds.
+              </p>
+            </div>
+
+            {/* Features summary */}
+            <div className="p-4 bg-slate-50 dark:bg-zinc-800/50 rounded-xl border border-slate-200/80 dark:border-zinc-800 space-y-2">
+              <div className="text-xs font-bold text-slate-700 dark:text-slate-300">How It Works:</div>
+              <ul className="text-[11px] text-slate-600 dark:text-slate-400 space-y-1.5 list-disc pl-4">
+                <li>Receipts are dispatched automatically whenever you add or deduct balance.</li>
+                <li>Each student receives a personalized breakdown with reference ID, notes, and remaining balance.</li>
+                <li>Includes an instant <strong>&quot;View Ledger &amp; Statement&quot;</strong> button linking directly to student passbook.</li>
+              </ul>
+            </div>
+          </div>
+
+          <DialogFooter className="p-4 bg-slate-50/80 dark:bg-zinc-900/80 border-t border-slate-200 dark:border-zinc-800 flex justify-end">
+            <Button variant="outline" size="sm" onClick={() => setIsEmailCenterOpen(false)} className="rounded-xl px-5 text-xs">
+              Close
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Interactive Email Preview Modal */}
+      <Dialog open={showPreviewModal} onOpenChange={setShowPreviewModal}>
+        <DialogContent className="max-w-lg bg-slate-100 dark:bg-zinc-950 rounded-2xl shadow-2xl border border-slate-300 dark:border-zinc-800 p-6 max-h-[85vh] overflow-y-auto">
+          <DialogHeader className="pb-3 border-b border-slate-200 dark:border-zinc-800">
+            <DialogTitle className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Eye className="w-4 h-4 text-emerald-600" />
+              Receipt Email Live Preview
+            </DialogTitle>
+          </DialogHeader>
+
+          {/* Rendered Email Mockup */}
+          <div className="mt-4 bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden text-left text-slate-800">
+            {/* Header */}
+            <div className="p-5 bg-gradient-to-r from-indigo-950 to-indigo-900 text-white flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 bg-white/15 rounded-lg flex items-center justify-center text-base">
+                  🖨️
+                </div>
+                <div>
+                  <div className="text-sm font-bold text-white">Photocopy Ledger</div>
+                </div>
+              </div>
+              <span className="px-2.5 py-1 bg-white/15 border border-white/25 rounded-full text-[9px] font-bold tracking-wider text-white">
+                OFFICIAL RECEIPT
+              </span>
+            </div>
+
+            {/* Hero */}
+            <div className="p-6 text-center border-b border-slate-100">
+              <span className="inline-block px-3 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-full text-[10px] font-bold tracking-wide mb-2">
+                BALANCE CREDITED
+              </span>
+              <div className="text-3xl font-extrabold text-emerald-600 tracking-tight">
+                +₹100.00
+              </div>
+              <div className="text-xs text-slate-500 mt-1">
+                Processed for <strong>Surya Vamshi Kusam</strong>
+              </div>
+            </div>
+
+            {/* Breakdown Table */}
+            <div className="p-5">
+              <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-2">Transaction Details</div>
+              <div className="bg-slate-50 rounded-xl border border-slate-200 divide-y divide-slate-200 text-xs overflow-hidden">
+                <div className="p-2.5 px-3 flex justify-between">
+                  <span className="text-slate-500">Reference ID</span>
+                  <span className="font-mono font-semibold text-slate-700">TXN-9F2B81A4</span>
+                </div>
+                <div className="p-2.5 px-3 flex justify-between">
+                  <span className="text-slate-500">Date &amp; Time</span>
+                  <span className="text-slate-700 font-medium">{format(new Date(), 'MMM d, yyyy • h:mm a')}</span>
+                </div>
+                <div className="p-2.5 px-3 flex justify-between">
+                  <span className="text-slate-500">Purpose / Note</span>
+                  <span className="font-semibold text-slate-900">GPay Top-up / Advance deposit</span>
+                </div>
+                <div className="p-3 bg-white flex justify-between items-center font-bold">
+                  <span className="text-slate-900">Updated Balance</span>
+                  <span className="text-sm text-indigo-950 font-extrabold">₹350.00</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Action button */}
+            <div className="px-5 pb-6 text-center">
+              <div className="inline-block px-6 py-2.5 bg-indigo-600 text-white rounded-lg text-xs font-semibold shadow-md shadow-indigo-600/20 cursor-default">
+                View Ledger &amp; Statement &rarr;
+              </div>
+              <div className="text-[10px] text-slate-400 mt-2">
+                Links directly to student account passbook
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="p-3 bg-slate-50 border-t border-slate-200 text-center text-[9px] text-slate-400">
+              🛡️ Automated system receipt • Photocopy Ledger
+            </div>
+          </div>
+
+          <DialogFooter className="mt-4 flex justify-end">
+            <Button size="sm" onClick={() => setShowPreviewModal(false)} className="rounded-xl px-5 text-xs">
+              Back to Email Center
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
+
