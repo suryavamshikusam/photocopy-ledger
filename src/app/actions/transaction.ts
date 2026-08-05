@@ -42,17 +42,28 @@ export async function createTransaction(userId: string, type: 'deposit' | 'deduc
       ? parseFloat(txRecord.balance_after) 
       : parseFloat(profile.current_balance)
 
-    // Dispatch transactional email asynchronously
-    sendTransactionEmail({
-      studentName: profile.full_name,
-      studentEmail: profile.email,
-      type,
-      amount,
-      balanceAfter,
-      note,
-      transactionId: txRecord?.id ? `TXN-${txRecord.id.substring(0, 8).toUpperCase()}` : undefined,
-      date: txRecord?.created_at ? new Date(txRecord.created_at) : new Date(),
-    }).catch((err) => console.error('[Background Email Error]:', err))
+    console.log(`[Email Dispatching] Triggering receipt email to ${profile.email} (${profile.full_name})...`)
+
+    // Await transactional email to guarantee delivery in server actions
+    try {
+      const emailRes = await sendTransactionEmail({
+        studentName: profile.full_name,
+        studentEmail: profile.email,
+        type,
+        amount,
+        balanceAfter,
+        note,
+        transactionId: txRecord?.id ? `TXN-${txRecord.id.substring(0, 8).toUpperCase()}` : undefined,
+        date: txRecord?.created_at ? new Date(txRecord.created_at) : new Date(),
+      })
+      if (!emailRes.success) {
+        console.warn(`[Email Warning] Email not sent to ${profile.email}:`, emailRes.error)
+      }
+    } catch (err: any) {
+      console.error('[Background Email Error]:', err?.message || err)
+    }
+  } else {
+    console.warn(`[Email Warning] No email found for profile ID: ${userId}`)
   }
 
   revalidatePath('/admin')
@@ -116,8 +127,12 @@ export async function createBulkTransactions(userIds: string[], type: 'deposit' 
         }
       })
 
-    // Dispatch bulk emails in background batches
-    sendBulkTransactionEmails(emailPayloads).catch(err => console.error('[Bulk Email Error]:', err))
+    // Await bulk email dispatching
+    try {
+      await sendBulkTransactionEmails(emailPayloads)
+    } catch (err: any) {
+      console.error('[Bulk Email Error]:', err?.message || err)
+    }
   }
 
   revalidatePath('/admin')
