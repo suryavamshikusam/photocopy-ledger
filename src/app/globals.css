@@ -130,10 +130,14 @@
 }
 
 @keyframes apple-spin {
-  from {
+  0% {
     transform: rotate(0deg);
   }
-  to {
+  100% {
     transform: rotate(360deg);
   }
+}
+
+.animate-apple-spin {
+  animation: apple-spin 0.8s steps(12, end) infinite;
 }

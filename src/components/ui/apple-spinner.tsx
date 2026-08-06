@@ -9,12 +9,20 @@ interface AppleSpinnerProps extends React.SVGAttributes<SVGSVGElement> {
   color?: string
 }
 
-const sizeMap = {
+const sizeMap: Record<string, number> = {
   xs: 12,
   sm: 16,
   md: 20,
   lg: 28,
   xl: 36,
+}
+
+const sizeClassMap: Record<string, string> = {
+  xs: 'size-3 w-3 h-3',
+  sm: 'size-4 w-4 h-4',
+  md: 'size-5 w-5 h-5',
+  lg: 'size-7 w-7 h-7',
+  xl: 'size-9 w-9 h-9',
 }
 
 export function AppleSpinner({
@@ -24,6 +32,7 @@ export function AppleSpinner({
   ...props
 }: AppleSpinnerProps) {
   const pixelSize = typeof size === 'number' ? size : sizeMap[size] || 20
+  const sizeClass = typeof size === 'string' ? sizeClassMap[size] || 'size-5' : ''
 
   // 12 spokes rotated at 30-degree intervals (Apple iOS Activity Indicator)
   const spokes = [
@@ -48,7 +57,7 @@ export function AppleSpinner({
       viewBox="0 0 24 24"
       fill="none"
       xmlns="http://www.w3.org/2000/svg"
-      className={cn('animate-[apple-spin_0.8s_steps(12,end)_infinite] shrink-0', className)}
+      className={cn('animate-apple-spin shrink-0', sizeClass, className)}
       aria-label="Loading"
       role="status"
       {...props}
@@ -103,3 +112,4 @@ export function AppleLoadingCard({
     </div>
   )
 }
+

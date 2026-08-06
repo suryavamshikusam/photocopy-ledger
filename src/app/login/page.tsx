@@ -11,13 +11,25 @@ import { useState } from "react"
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
 
-  async function handleLogin(formData: FormData) {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (loading) return
     setLoading(true)
-    const result = await login(formData)
-    if (result?.error) {
-      toast.error(result.error)
+
+    try {
+      const formData = new FormData(e.currentTarget)
+      const result = await login(formData)
+      if (result?.error) {
+        toast.error(result.error)
+        setLoading(false)
+      }
+    } catch (err: any) {
+      if (err?.message === 'NEXT_REDIRECT' || err?.digest?.startsWith('NEXT_REDIRECT')) {
+        return
+      }
+      toast.error('An unexpected error occurred. Please try again.')
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -65,7 +77,7 @@ export default function LoginPage() {
             <CardHeader className="space-y-1 pb-6 pt-8">
               <CardTitle className="text-xl font-semibold tracking-tight text-center text-slate-800">Sign In</CardTitle>
             </CardHeader>
-            <form action={handleLogin}>
+            <form onSubmit={handleSubmit}>
               <CardContent className="space-y-5 px-8">
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-slate-700 font-medium">Email Address</Label>
