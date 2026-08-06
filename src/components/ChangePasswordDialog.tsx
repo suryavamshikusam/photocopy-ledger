@@ -82,12 +82,12 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
               />
             </div>
           </div>
-          <DialogFooter>
+          <DialogFooter className="gap-2 sm:gap-0">
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={loading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Save Password"}
+            <Button type="submit" loading={loading} loadingText="Saving Password...">
+              Save Password
             </Button>
           </DialogFooter>
         </form>

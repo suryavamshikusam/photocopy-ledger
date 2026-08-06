@@ -55,8 +55,8 @@ export default function ChangePasswordPage() {
             </div>
           </CardContent>
           <CardFooter>
-            <Button className="w-full" type="submit" disabled={loading}>
-              {loading ? "Updating..." : "Update Password"}
+            <Button className="w-full" type="submit" loading={loading} loadingText="Updating Password...">
+              Update Password
             </Button>
           </CardFooter>
         </form>

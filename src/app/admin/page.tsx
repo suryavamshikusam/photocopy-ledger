@@ -1,10 +1,9 @@
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
 import AdminClient from "./AdminClient"
-import { Button } from "@/components/ui/button"
-import { logout } from "../actions/auth"
-import { LogOut, ShieldCheck } from "lucide-react"
+import { ShieldCheck } from "lucide-react"
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
+import { SignOutButton } from "@/components/SignOutButton"
 
 export default async function AdminPage() {
   const supabase = await createClient()
@@ -122,11 +121,7 @@ export default async function AdminPage() {
             </div>
             <div className="flex items-center">
               <ChangePasswordDialog />
-              <form action={logout}>
-                <Button type="submit" variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full" title="Sign out">
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </form>
+              <SignOutButton />
             </div>
           </div>
         </div>

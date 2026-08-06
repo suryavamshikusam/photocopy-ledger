@@ -4,10 +4,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { format } from "date-fns"
-import { Button } from "@/components/ui/button"
-import { logout } from "../actions/auth"
-import { LogOut, ReceiptText, Wallet } from "lucide-react"
+import { ReceiptText, Wallet } from "lucide-react"
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
+import { SignOutButton } from "@/components/SignOutButton"
 
 export default async function DashboardPage() {
   const supabase = await createClient()
@@ -61,11 +60,7 @@ export default async function DashboardPage() {
             </div>
             <div className="flex items-center">
               <ChangePasswordDialog />
-              <form action={logout}>
-                <Button type="submit" variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full" title="Sign out">
-                  <LogOut className="h-4 w-4" />
-                </Button>
-              </form>
+              <SignOutButton />
             </div>
           </div>
         </div>

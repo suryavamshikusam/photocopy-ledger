@@ -15,6 +15,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
 import { format } from "date-fns"
+import { AppleSpinner, AppleLoadingCard } from '@/components/ui/apple-spinner'
 import Fuse from 'fuse.js'
 
 type Profile = {
@@ -33,6 +34,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [isBulkDialogOpen, setIsBulkDialogOpen] = useState(false)
   const [isBulkMatchDialogOpen, setIsBulkMatchDialogOpen] = useState(false)
   const [bulkMatchText, setBulkMatchText] = useState('')
+  const [matchingLoading, setMatchingLoading] = useState(false)
   const [fuzzyMatches, setFuzzyMatches] = useState<Array<{
     original: string;
     matchedProfile: Profile | null;
@@ -117,9 +119,12 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     setSelectedUserIds(newSelected)
   }
 
-  const handleBulkMatch = () => {
+  const handleBulkMatch = async () => {
     const names = bulkMatchText.split('\n').map(n => n.trim()).filter(n => n)
     if (names.length === 0) return
+
+    setMatchingLoading(true)
+    await new Promise(r => setTimeout(r, 150))
 
     const fuse = new Fuse(users, {
       keys: ['full_name', 'email'],
@@ -136,6 +141,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     })
 
     setFuzzyMatches(matches)
+    setMatchingLoading(false)
   }
 
   const confirmBulkMatch = () => {
@@ -593,8 +599,8 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? "Processing..." : "Confirm Transaction"}
+              <Button type="submit" loading={loading} loadingText="Confirming Transaction...">
+                Confirm Transaction
               </Button>
             </DialogFooter>
           </form>
@@ -671,8 +677,8 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               <Button type="button" variant="outline" onClick={() => setIsBulkDialogOpen(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={loading}>
-                {loading ? "Processing..." : `Confirm for ${selectedUserIds.size} Students`}
+              <Button type="submit" loading={loading} loadingText={`Processing ${selectedUserIds.size} student${selectedUserIds.size === 1 ? '' : 's'}...`}>
+                Confirm for {selectedUserIds.size} Students
               </Button>
             </DialogFooter>
           </form>
@@ -702,7 +708,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   value={bulkMatchText}
                   onChange={(e) => setBulkMatchText(e.target.value)}
                 />
-                <Button onClick={handleBulkMatch} className="w-full">Find Matches</Button>
+                <Button onClick={handleBulkMatch} className="w-full" loading={matchingLoading} loadingText="Matching Names...">
+                  Find Matches
+                </Button>
               </div>
             ) : (
               <div className="space-y-4">
@@ -781,9 +789,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
 
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/40 dark:bg-zinc-950/40">
             {historyLoading ? (
-              <div className="flex flex-col items-center justify-center py-20 text-slate-400">
-                <Loader2 className="w-9 h-9 animate-spin text-indigo-600 mb-3" />
-                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">Loading ledger records...</p>
+              <div className="flex flex-col items-center justify-center py-16">
+                <AppleLoadingCard 
+                  message="Loading ledger records..." 
+                  subtext="Retrieving verified transaction history" 
+                />
               </div>
             ) : userTransactions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center bg-white dark:bg-zinc-900 rounded-xl border border-dashed border-slate-200 dark:border-zinc-800">
