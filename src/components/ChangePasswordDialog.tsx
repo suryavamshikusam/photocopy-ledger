@@ -51,7 +51,7 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
         </DialogTrigger>
       )}
       <DialogContent className="sm:max-w-[425px]">
-        <form onSubmit={handleSubmit}>
+        <form method="POST" onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Change Password</DialogTitle>
             <DialogDescription>

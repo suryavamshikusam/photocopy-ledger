@@ -532,7 +532,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       {/* Single Transaction Modal */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <form action={handleTransaction}>
+          <form method="POST" action={handleTransaction}>
             <DialogHeader>
               <DialogTitle>Process Transaction</DialogTitle>
               <DialogDescription>
@@ -610,7 +610,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       {/* Bulk Transaction Modal */}
       <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <form action={handleBulkTransaction}>
+          <form method="POST" action={handleBulkTransaction}>
             <DialogHeader>
               <DialogTitle>Bulk Transaction</DialogTitle>
               <DialogDescription>

@@ -9,6 +9,8 @@ import { toast } from "sonner"
 import { useState } from "react"
 
 export default function LoginPage() {
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
@@ -17,7 +19,10 @@ export default function LoginPage() {
     setLoading(true)
 
     try {
-      const formData = new FormData(e.currentTarget)
+      const formData = new FormData()
+      formData.append('email', email)
+      formData.append('password', password)
+
       const result = await login(formData)
       if (result?.error) {
         toast.error(result.error)
@@ -77,7 +82,7 @@ export default function LoginPage() {
             <CardHeader className="space-y-1 pb-6 pt-8">
               <CardTitle className="text-xl font-semibold tracking-tight text-center text-slate-800">Sign In</CardTitle>
             </CardHeader>
-            <form onSubmit={handleSubmit}>
+            <form method="POST" onSubmit={handleSubmit}>
               <CardContent className="space-y-5 px-8">
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-slate-700 font-medium">Email Address</Label>
@@ -85,8 +90,11 @@ export default function LoginPage() {
                     id="email" 
                     name="email" 
                     type="email" 
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
                     placeholder="m@example.com" 
                     required 
+                    autoComplete="email"
                     className="bg-white/50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:ring-indigo-500 h-11 shadow-inner"
                   />
                 </div>
@@ -99,7 +107,10 @@ export default function LoginPage() {
                     id="password" 
                     name="password" 
                     type="password" 
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
                     required 
+                    autoComplete="current-password"
                     className="bg-white/50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:ring-indigo-500 h-11 shadow-inner"
                   />
                 </div>
@@ -121,3 +132,4 @@ export default function LoginPage() {
     </div>
   )
 }
+

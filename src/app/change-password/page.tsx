@@ -29,7 +29,7 @@ export default function ChangePasswordPage() {
             You must change your default password before continuing.
           </CardDescription>
         </CardHeader>
-        <form action={handleSubmit}>
+        <form method="POST" action={handleSubmit}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="password">New Password</Label>
