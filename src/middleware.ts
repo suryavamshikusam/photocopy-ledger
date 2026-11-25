@@ -54,6 +54,11 @@ export async function middleware(request: NextRequest) {
     return redirectWithCookies(url, supabaseResponse)
   }
 
+  // For Server Action POST requests, session refresh is done above and each action validates RBAC itself
+  if (request.method === 'POST' && request.headers.has('next-action')) {
+    return supabaseResponse
+  }
+
   // Fetch the authenticated user's profile to check role and must_change_password flag
   const { data: profile } = await supabase
     .from('profiles')

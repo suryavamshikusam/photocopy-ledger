@@ -67,12 +67,18 @@ export default async function AdminPage() {
     redirect('/dashboard')
   }
 
-  // Fetch all students
-  const { data: usersData, error: usersError } = await supabase
-    .from('profiles')
-    .select('id, full_name, email, current_balance')
-    .eq('role', 'student')
-    .order('full_name', { ascending: true })
+  // Fetch students and server-side aggregated metrics in parallel
+  const [
+    { data: usersData, error: usersError },
+    { data: rpcMetrics, error: rpcError },
+  ] = await Promise.all([
+    supabase
+      .from('profiles')
+      .select('id, full_name, email, current_balance')
+      .eq('role', 'student')
+      .order('full_name', { ascending: true }),
+    supabase.rpc('get_admin_metrics'),
+  ])
 
   const users: Profile[] = (usersData || []).map((u) => ({
     id: u.id,
@@ -90,7 +96,6 @@ export default async function AdminPage() {
   let metricsError: string | null = null
 
   // Prefer server-side Postgres RPC aggregation; fall back to paginated fetch if RPC is not yet migrated
-  const { data: rpcMetrics, error: rpcError } = await supabase.rpc('get_admin_metrics')
 
   if (!rpcError && Array.isArray(rpcMetrics) && rpcMetrics.length > 0) {
     const row = rpcMetrics[0]

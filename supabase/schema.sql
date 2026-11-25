@@ -199,6 +199,10 @@ CREATE POLICY "Only admins can insert transactions" ON public.transactions
 -- Transactions are IMMUTABLE. NO UPDATE or DELETE allowed for ANYONE.
 -- (By not creating UPDATE or DELETE policies, they are denied by default under RLS)
 
--- Create index for faster querying
-CREATE INDEX idx_transactions_user_id ON public.transactions(user_id);
+-- Create indexes for faster querying (composite index accelerates per-student history)
+CREATE INDEX idx_transactions_user_created ON public.transactions(user_id, created_at DESC);
 CREATE INDEX idx_transactions_created_at ON public.transactions(created_at DESC);
+
+-- Enable Realtime publication for live student dashboard updates
+ALTER PUBLICATION supabase_realtime ADD TABLE public.transactions;
+ALTER PUBLICATION supabase_realtime ADD TABLE public.profiles;

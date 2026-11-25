@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
@@ -9,12 +9,12 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
-import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
-import { Search, Users, ReceiptText, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { createTransaction, createBulkTransactions } from '../actions/transaction'
+import { createClient } from '@/lib/supabase/client'
+import { Search, Users, ReceiptText, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Download, RefreshCw } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { AppleLoadingCard } from '@/components/ui/apple-spinner'
 import { formatLedgerDate, isAdminCorrectionNote } from '@/lib/format'
 import Fuse from 'fuse.js'
 
@@ -96,7 +96,94 @@ function parseTransactionForm(formData: FormData): {
   return { finalType: type, finalAmount, finalNote }
 }
 
+function applyOptimisticMetrics(
+  prev: AdminMetrics,
+  nextUsers: Profile[],
+  count: number,
+  type: 'deposit' | 'deduction',
+  amount: number,
+  note: string
+): AdminMetrics {
+  const totalDelta = amount * count
+  let totalDeposits = prev.totalDeposits
+  let totalSpent = prev.totalSpent
+
+  if (isAdminCorrectionNote(note)) {
+    if (note.includes('entered as a deposit in error')) {
+      totalDeposits += type === 'deduction' ? -totalDelta : totalDelta
+    } else if (note.includes('entered as a deduction in error')) {
+      totalSpent += type === 'deposit' ? -totalDelta : totalDelta
+    } else if (type === 'deposit') {
+      totalDeposits += totalDelta
+    } else {
+      totalSpent += totalDelta
+    }
+  } else if (type === 'deposit') {
+    totalDeposits += totalDelta
+  } else {
+    totalSpent += totalDelta
+  }
+
+  let netBalance = 0
+  let lowBalanceCount = 0
+  for (const u of nextUsers) {
+    netBalance += u.current_balance
+    if (u.current_balance < 50) lowBalanceCount++
+  }
+
+  return {
+    totalDeposits: Math.max(0, Math.round(totalDeposits * 100) / 100),
+    totalSpent: Math.max(0, Math.round(totalSpent * 100) / 100),
+    netBalance: Math.round(netBalance * 100) / 100,
+    lowBalanceCount,
+  }
+}
+
+function exportTransactionsCsv(user: Profile, transactions: TransactionRecord[]) {
+  const escapeCsv = (val: string) => `"${val.replace(/"/g, '""')}"`
+  const header = ['Date & Time (IST)', 'Type', 'Note', 'Amount (INR)', 'Balance After (INR)']
+  const rows = transactions.map((tx) => {
+    const isCorrection = isAdminCorrectionNote(tx.note)
+    const label = isCorrection ? 'Correction' : tx.type === 'deposit' ? 'Deposit' : 'Deduction'
+    const signedAmt = `${tx.type === 'deposit' ? '+' : '-'}${(parseFloat(String(tx.amount)) || 0).toFixed(2)}`
+    const balAfter = (parseFloat(String(tx.balance_after)) || 0).toFixed(2)
+    return [
+      escapeCsv(formatLedgerDate(tx.created_at)),
+      escapeCsv(label),
+      escapeCsv(tx.note ?? ''),
+      escapeCsv(signedAmt),
+      escapeCsv(balAfter),
+    ].join(',')
+  })
+
+  const csvContent = [header.join(','), ...rows].join('\n')
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const safeName = user.full_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'student'
+  link.href = url
+  link.download = `${safeName}-ledger.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export default function AdminClient({ users, metrics }: { users: Profile[]; metrics: AdminMetrics }) {
+  const supabase = useMemo(() => createClient(), [])
+
+  // Local optimistic state synced with server-rendered props
+  const [localUsers, setLocalUsers] = useState<Profile[]>(users)
+  const [localMetrics, setLocalMetrics] = useState<AdminMetrics>(metrics)
+
+  useEffect(() => {
+    setLocalUsers(users)
+  }, [users])
+
+  useEffect(() => {
+    setLocalMetrics(metrics)
+  }, [metrics])
+
   const [searchTerm, setSearchTerm] = useState('')
   const [balanceFilter, setBalanceFilter] = useState<string>('all')
   const [balanceSortOrder, setBalanceSortOrder] = useState<'none' | 'asc' | 'desc'>('none')
@@ -118,17 +205,67 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
   const [txType, setTxType] = useState<string>('deposit')
   const [bulkTxType, setBulkTxType] = useState<string>('deposit')
 
-  // History modal state
+  // History modal state with SWR cache + hover prefetch + request deduplication
   const [historyUser, setHistoryUser] = useState<Profile | null>(null)
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
   const [userTransactions, setUserTransactions] = useState<TransactionRecord[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historySyncing, setHistorySyncing] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const historyCacheRef = useRef<Map<string, TransactionRecord[]>>(new Map())
+  const inFlightRef = useRef<Map<string, Promise<TransactionRecord[]>>>(new Map())
+  const activeHistoryUserIdRef = useRef<string | null>(null)
 
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
+  // Direct 1-hop RLS-secured fetch (Browser -> Supabase) with deduplication & caching
+  const fetchStudentHistory = useCallback(
+    async (userId: string): Promise<TransactionRecord[]> => {
+      const existingPromise = inFlightRef.current.get(userId)
+      if (existingPromise) {
+        return existingPromise
+      }
+
+      const promise = (async () => {
+        const { data, error } = await supabase
+          .from('transactions')
+          .select('id, user_id, admin_id, type, amount, balance_after, note, created_at')
+          .eq('user_id', userId)
+          .order('created_at', { ascending: false })
+
+        if (error) {
+          throw new Error(error.message)
+        }
+
+        const records = (data ?? []) as TransactionRecord[]
+        historyCacheRef.current.set(userId, records)
+        return records
+      })().finally(() => {
+        inFlightRef.current.delete(userId)
+      })
+
+      inFlightRef.current.set(userId, promise)
+      return promise
+    },
+    [supabase]
+  )
+
+  const prefetchStudentHistory = useCallback(
+    (userId: string) => {
+      if (historyCacheRef.current.has(userId) || inFlightRef.current.has(userId)) {
+        return
+      }
+      fetchStudentHistory(userId).catch(() => {
+        // Silent prefetch failure; errors surface if the user explicitly opens History
+      })
+    },
+    [fetchStudentHistory]
+  )
+
   const filteredUsers = useMemo(() => {
-    let result = users.filter((u) => {
+    let result = localUsers.filter((u) => {
       const matchesSearch =
         u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         u.email.toLowerCase().includes(searchTerm.toLowerCase())
@@ -157,7 +294,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
     }
 
     return result
-  }, [users, searchTerm, balanceFilter, balanceSortOrder])
+  }, [localUsers, searchTerm, balanceFilter, balanceSortOrder])
 
   const handleOpenDialog = (user: Profile) => {
     setSelectedUser(user)
@@ -171,21 +308,42 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
   }
 
   const handleOpenHistory = async (user: Profile) => {
+    activeHistoryUserIdRef.current = user.id
     setHistoryUser(user)
-    setUserTransactions([])
+    setHistoryError(null)
     setIsHistoryDialogOpen(true)
-    setHistoryLoading(true)
-    try {
-      const res = await getUserTransactions(user.id)
-      if (res.error) {
-        toast.error('Failed to load transaction history')
-      } else {
-        setUserTransactions(res.transactions as TransactionRecord[])
-      }
-    } catch {
-      toast.error('Failed to load transaction history')
-    } finally {
+
+    const cached = historyCacheRef.current.get(user.id)
+    if (cached) {
+      // Stale-while-revalidate: render cached rows in 0ms, refresh silently in background
+      setUserTransactions(cached)
       setHistoryLoading(false)
+      setHistorySyncing(true)
+    } else {
+      setUserTransactions([])
+      setHistoryLoading(true)
+      setHistorySyncing(false)
+    }
+
+    try {
+      const fresh = await fetchStudentHistory(user.id)
+      if (activeHistoryUserIdRef.current === user.id) {
+        setUserTransactions(fresh)
+        setHistoryError(null)
+      }
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Failed to load transaction history'
+      if (activeHistoryUserIdRef.current === user.id) {
+        if (!cached) {
+          setHistoryError(message)
+        }
+        toast.error(message)
+      }
+    } finally {
+      if (activeHistoryUserIdRef.current === user.id) {
+        setHistoryLoading(false)
+        setHistorySyncing(false)
+      }
     }
   }
 
@@ -219,7 +377,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
     setMatchingLoading(true)
     await new Promise((r) => setTimeout(r, 150))
 
-    const fuse = new Fuse(users, {
+    const fuse = new Fuse(localUsers, {
       keys: ['full_name', 'email'],
       threshold: 0.4,
     })
@@ -262,24 +420,41 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
       return
     }
 
+    const { finalType, finalAmount, finalNote } = parsed
+    const targetUser = selectedUser
+    const signedDelta = finalType === 'deposit' ? finalAmount : -finalAmount
+
+    // Snapshot for rollback on error
+    const prevUsers = localUsers
+    const prevMetrics = localMetrics
+
+    // Optimistic UI update
+    const nextUsers = prevUsers.map((u) =>
+      u.id === targetUser.id
+        ? { ...u, current_balance: Math.round((u.current_balance + signedDelta) * 100) / 100 }
+        : u
+    )
+    setLocalUsers(nextUsers)
+    setLocalMetrics(applyOptimisticMetrics(prevMetrics, nextUsers, 1, finalType, finalAmount, finalNote))
+
     setLoading(true)
     try {
-      const res = await createTransaction(
-        selectedUser.id,
-        parsed.finalType,
-        parsed.finalAmount,
-        parsed.finalNote
-      )
+      const res = await createTransaction(targetUser.id, finalType, finalAmount, finalNote)
 
       if (res.error) {
+        setLocalUsers(prevUsers)
+        setLocalMetrics(prevMetrics)
         toast.error(res.error)
       } else {
+        historyCacheRef.current.delete(targetUser.id)
         toast.success(
-          `Successfully processed ${parsed.finalType} of ₹${parsed.finalAmount.toFixed(2)} for ${selectedUser.full_name}`
+          `Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${targetUser.full_name}`
         )
         setIsDialogOpen(false)
       }
     } catch {
+      setLocalUsers(prevUsers)
+      setLocalMetrics(prevMetrics)
       toast.error('An unexpected network error occurred while processing the transaction.')
     } finally {
       setLoading(false)
@@ -297,25 +472,43 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
       return
     }
 
+    const { finalType, finalAmount, finalNote } = parsed
+    const targetIds = Array.from(selectedUserIds)
+    const targetIdSet = new Set(targetIds)
+    const signedDelta = finalType === 'deposit' ? finalAmount : -finalAmount
+
+    const prevUsers = localUsers
+    const prevMetrics = localMetrics
+
+    const nextUsers = prevUsers.map((u) =>
+      targetIdSet.has(u.id)
+        ? { ...u, current_balance: Math.round((u.current_balance + signedDelta) * 100) / 100 }
+        : u
+    )
+    setLocalUsers(nextUsers)
+    setLocalMetrics(
+      applyOptimisticMetrics(prevMetrics, nextUsers, targetIds.length, finalType, finalAmount, finalNote)
+    )
+
     setLoading(true)
     try {
-      const res = await createBulkTransactions(
-        Array.from(selectedUserIds),
-        parsed.finalType,
-        parsed.finalAmount,
-        parsed.finalNote
-      )
+      const res = await createBulkTransactions(targetIds, finalType, finalAmount, finalNote)
 
       if (res.error) {
+        setLocalUsers(prevUsers)
+        setLocalMetrics(prevMetrics)
         toast.error(res.error)
       } else {
+        targetIds.forEach((id) => historyCacheRef.current.delete(id))
         toast.success(
-          `Successfully processed ${parsed.finalType} of ₹${parsed.finalAmount.toFixed(2)} for ${selectedUserIds.size} students`
+          `Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${targetIds.length} students`
         )
         setIsBulkDialogOpen(false)
         setSelectedUserIds(new Set())
       }
     } catch {
+      setLocalUsers(prevUsers)
+      setLocalMetrics(prevMetrics)
       toast.error('An unexpected network error occurred while processing bulk transactions.')
     } finally {
       setLoading(false)
@@ -326,7 +519,12 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
   const isAllSelected = filteredUsers.length > 0 && selectedInFilterCount === filteredUsers.length
   const isIndeterminate = selectedInFilterCount > 0 && selectedInFilterCount < filteredUsers.length
 
-  const historyBalance = historyUser ? parseFloat(String(historyUser.current_balance)) || 0 : 0
+  const currentHistoryProfile = historyUser
+    ? localUsers.find((u) => u.id === historyUser.id) ?? historyUser
+    : null
+  const historyBalance = currentHistoryProfile
+    ? parseFloat(String(currentHistoryProfile.current_balance)) || 0
+    : 0
 
   return (
     <div className="space-y-6">
@@ -343,7 +541,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
           </CardHeader>
           <CardContent className="relative z-10">
             <div className="text-3xl font-extrabold text-green-600 dark:text-green-400">
-              ₹{metrics.totalDeposits.toFixed(2)}
+              ₹{localMetrics.totalDeposits.toFixed(2)}
             </div>
           </CardContent>
         </Card>
@@ -359,7 +557,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
           </CardHeader>
           <CardContent className="relative z-10">
             <div className="text-3xl font-extrabold text-red-600 dark:text-red-400">
-              ₹{metrics.totalSpent.toFixed(2)}
+              ₹{localMetrics.totalSpent.toFixed(2)}
             </div>
           </CardContent>
         </Card>
@@ -380,7 +578,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
           </CardHeader>
           <CardContent className="relative z-10">
             <div className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400">
-              ₹{metrics.netBalance.toFixed(2)}
+              ₹{localMetrics.netBalance.toFixed(2)}
             </div>
           </CardContent>
         </Card>
@@ -416,7 +614,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
           </CardHeader>
           <CardContent className="relative z-10 flex items-baseline justify-between">
             <div className="text-3xl font-extrabold text-orange-600 dark:text-orange-400">
-              {metrics.lowBalanceCount}
+              {localMetrics.lowBalanceCount}
             </div>
             <span className="text-xs text-orange-700 dark:text-orange-300 font-medium">
               {balanceFilter === 'low' ? '✕ Reset' : 'Click to filter'}
@@ -598,6 +796,8 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
                             variant="ghost"
                             size="sm"
                             className="h-8 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-zinc-800 px-2.5 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center gap-1.5"
+                            onMouseEnter={() => prefetchStudentHistory(u.id)}
+                            onFocus={() => prefetchStudentHistory(u.id)}
                             onClick={(e) => {
                               e.stopPropagation()
                               handleOpenHistory(u)
@@ -864,25 +1064,39 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
       </Dialog>
 
       {/* Student Transaction History Modal */}
-      <Dialog open={isHistoryDialogOpen} onOpenChange={setIsHistoryDialogOpen}>
+      <Dialog
+        open={isHistoryDialogOpen}
+        onOpenChange={(open) => {
+          setIsHistoryDialogOpen(open)
+          if (!open) {
+            activeHistoryUserIdRef.current = null
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-4xl max-w-4xl w-[95vw] max-h-[88vh] flex flex-col p-0 overflow-hidden rounded-2xl shadow-2xl border-slate-200 dark:border-zinc-800">
           <DialogHeader className="p-6 pb-5 border-b border-slate-200/80 dark:border-zinc-800 bg-gradient-to-r from-slate-50 via-indigo-50/20 to-white dark:from-zinc-900 dark:via-zinc-900/50 dark:to-zinc-950">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pr-6">
               <div className="flex items-center gap-3.5">
                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white font-bold text-lg flex items-center justify-center shadow-md shadow-indigo-200 dark:shadow-none">
-                  {historyUser?.full_name?.charAt(0).toUpperCase() || 'S'}
+                  {currentHistoryProfile?.full_name?.charAt(0).toUpperCase() || 'S'}
                 </div>
                 <div>
                   <DialogTitle className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                    {historyUser?.full_name}
+                    {currentHistoryProfile?.full_name}
+                    {historySyncing && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                        Syncing
+                      </span>
+                    )}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-                    {historyUser?.email}
+                    {currentHistoryProfile?.email}
                   </DialogDescription>
                 </div>
               </div>
 
-              {historyUser && (
+              {currentHistoryProfile && (
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 shadow-sm text-right">
                     <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">Balance</span>
@@ -905,11 +1119,36 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
 
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/40 dark:bg-zinc-950/40">
             {historyLoading ? (
-              <div className="flex flex-col items-center justify-center py-16">
-                <AppleLoadingCard
-                  message="Loading ledger records..."
-                  subtext="Retrieving verified transaction history"
-                />
+              <div className="border border-slate-200/80 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
+                <div className="divide-y divide-slate-100 dark:divide-zinc-800/60">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="grid grid-cols-5 gap-4 px-5 py-4 animate-pulse">
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-32" />
+                      <div className="h-5 bg-slate-200 dark:bg-zinc-800 rounded-md w-20" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-44" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-16 ml-auto" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-20 ml-auto" />
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : historyError ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-zinc-900 rounded-xl border border-rose-200 dark:border-rose-900/50">
+                <p className="text-sm font-semibold text-rose-600 dark:text-rose-400">
+                  Could not load transaction history
+                </p>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm">{historyError}</p>
+                {currentHistoryProfile && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="mt-4"
+                    onClick={() => handleOpenHistory(currentHistoryProfile)}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
+                    Retry
+                  </Button>
+                )}
               </div>
             ) : userTransactions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-20 text-center bg-white dark:bg-zinc-900 rounded-xl border border-dashed border-slate-200 dark:border-zinc-800">
@@ -1006,9 +1245,22 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Showing {userTransactions.length} recorded transaction{userTransactions.length === 1 ? '' : 's'}
             </span>
-            <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
-              Close
-            </Button>
+            <div className="flex items-center gap-2">
+              {currentHistoryProfile && userTransactions.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => exportTransactionsCsv(currentHistoryProfile, userTransactions)}
+                  className="rounded-lg px-3 text-xs"
+                >
+                  <Download className="w-3.5 h-3.5 mr-1.5" />
+                  Export CSV
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
+                Close
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
