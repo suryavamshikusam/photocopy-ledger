@@ -11,11 +11,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { toast } from "sonner"
 import { createTransaction, createBulkTransactions } from '../actions/transaction'
 import { createClient } from '@/lib/supabase/client'
-import { Search, Users, ReceiptText, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { Search, Users, ReceiptText, Filter, ArrowUpDown, ArrowUp, ArrowDown, X, Download, RefreshCw } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { AppleLoadingCard } from '@/components/ui/apple-spinner'
 import { formatLedgerDate, isAdminCorrectionNote } from '@/lib/format'
 import Fuse from 'fuse.js'
 
@@ -140,6 +139,36 @@ function applyOptimisticMetrics(
   }
 }
 
+function exportTransactionsCsv(user: Profile, transactions: TransactionRecord[]) {
+  const escapeCsv = (val: string) => `"${val.replace(/"/g, '""')}"`
+  const header = ['Date & Time (IST)', 'Type', 'Note', 'Amount (INR)', 'Balance After (INR)']
+  const rows = transactions.map((tx) => {
+    const isCorrection = isAdminCorrectionNote(tx.note)
+    const label = isCorrection ? 'Correction' : tx.type === 'deposit' ? 'Deposit' : 'Deduction'
+    const signedAmt = `${tx.type === 'deposit' ? '+' : '-'}${(parseFloat(String(tx.amount)) || 0).toFixed(2)}`
+    const balAfter = (parseFloat(String(tx.balance_after)) || 0).toFixed(2)
+    return [
+      escapeCsv(formatLedgerDate(tx.created_at)),
+      escapeCsv(label),
+      escapeCsv(tx.note ?? ''),
+      escapeCsv(signedAmt),
+      escapeCsv(balAfter),
+    ].join(',')
+  })
+
+  const csvContent = [header.join(','), ...rows].join('\n')
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  const safeName = user.full_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'student'
+  link.href = url
+  link.download = `${safeName}-ledger.csv`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
 export default function AdminClient({ users, metrics }: { users: Profile[]; metrics: AdminMetrics }) {
   const supabase = useMemo(() => createClient(), [])
 
@@ -181,6 +210,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
   const [userTransactions, setUserTransactions] = useState<TransactionRecord[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
+  const [historySyncing, setHistorySyncing] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
 
   const historyCacheRef = useRef<Map<string, TransactionRecord[]>>(new Map())
@@ -288,9 +318,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
       // Stale-while-revalidate: render cached rows in 0ms, refresh silently in background
       setUserTransactions(cached)
       setHistoryLoading(false)
+      setHistorySyncing(true)
     } else {
       setUserTransactions([])
       setHistoryLoading(true)
+      setHistorySyncing(false)
     }
 
     try {
@@ -310,6 +342,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
     } finally {
       if (activeHistoryUserIdRef.current === user.id) {
         setHistoryLoading(false)
+        setHistorySyncing(false)
       }
     }
   }
@@ -675,7 +708,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
                     indeterminate={isIndeterminate}
                     onCheckedChange={handleSelectAll}
                     aria-label="Select all"
-                    className="border-indigo-300 data-[state=checked]:bg-indigo-600"
+                    className="border-indigo-300 data-checked:bg-indigo-600 data-checked:border-indigo-600"
                   />
                 </TableHead>
                 <TableHead className="h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Name</TableHead>
@@ -739,7 +772,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
                           checked={isSelected}
                           onCheckedChange={(checked) => handleSelectUser(u.id, !!checked)}
                           aria-label={`Select ${u.full_name}`}
-                          className="border-slate-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                          className="border-slate-300 data-checked:bg-indigo-600 data-checked:border-indigo-600"
                         />
                       </TableCell>
                       <TableCell className="py-3 font-semibold text-slate-800 dark:text-slate-200">{u.full_name}</TableCell>
@@ -1050,6 +1083,12 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
                 <div>
                   <DialogTitle className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
                     {currentHistoryProfile?.full_name}
+                    {historySyncing && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded-full">
+                        <RefreshCw className="w-2.5 h-2.5 animate-spin" />
+                        Syncing
+                      </span>
+                    )}
                   </DialogTitle>
                   <DialogDescription className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
                     {currentHistoryProfile?.email}
@@ -1080,11 +1119,18 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
 
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/40 dark:bg-zinc-950/40">
             {historyLoading ? (
-              <div className="flex flex-col items-center justify-center py-16">
-                <AppleLoadingCard
-                  message="Loading ledger records..."
-                  subtext="Retrieving verified transaction history"
-                />
+              <div className="border border-slate-200/80 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
+                <div className="divide-y divide-slate-100 dark:divide-zinc-800/60">
+                  {Array.from({ length: 5 }).map((_, i) => (
+                    <div key={i} className="grid grid-cols-5 gap-4 px-5 py-4 animate-pulse">
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-32" />
+                      <div className="h-5 bg-slate-200 dark:bg-zinc-800 rounded-md w-20" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-44" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-16 ml-auto" />
+                      <div className="h-3.5 bg-slate-200 dark:bg-zinc-800 rounded w-20 ml-auto" />
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : historyError ? (
               <div className="flex flex-col items-center justify-center py-16 text-center bg-white dark:bg-zinc-900 rounded-xl border border-rose-200 dark:border-rose-900/50">
@@ -1099,6 +1145,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
                     className="mt-4"
                     onClick={() => handleOpenHistory(currentHistoryProfile)}
                   >
+                    <RefreshCw className="w-3.5 h-3.5 mr-1.5" />
                     Retry
                   </Button>
                 )}
@@ -1198,9 +1245,22 @@ export default function AdminClient({ users, metrics }: { users: Profile[]; metr
             <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
               Showing {userTransactions.length} recorded transaction{userTransactions.length === 1 ? '' : 's'}
             </span>
-            <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
-              Close
-            </Button>
+            <div className="flex items-center gap-2">
+              {currentHistoryProfile && userTransactions.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => exportTransactionsCsv(currentHistoryProfile, userTransactions)}
+                  className="rounded-lg px-3 text-xs"
+                >
+                  <Download className="w-3.5 h-3.5 mr-1.5" />
+                  Export CSV
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setIsHistoryDialogOpen(false)} className="rounded-lg px-4">
+                Close
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>
