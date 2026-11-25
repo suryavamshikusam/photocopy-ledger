@@ -15,26 +15,31 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
   const [password, setPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setLoading(true)
+    if (loading) return
 
     if (password !== confirmPassword) {
       toast.error('Passwords do not match')
-      setLoading(false)
       return
     }
 
-    const res = await changePasswordInline(password, confirmPassword)
-    if (res?.error) {
-      toast.error(res.error)
-    } else {
-      toast.success('Password updated successfully')
-      setOpen(false)
-      setPassword('')
-      setConfirmPassword('')
+    setLoading(true)
+    try {
+      const res = await changePasswordInline(password, confirmPassword)
+      if (res?.error) {
+        toast.error(res.error)
+      } else {
+        toast.success('Password updated successfully')
+        setOpen(false)
+        setPassword('')
+        setConfirmPassword('')
+      }
+    } catch {
+      toast.error('Failed to update password. Please try again.')
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -42,16 +47,21 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
       {triggerComponent ? (
         <DialogTrigger render={triggerComponent as React.ReactElement} />
       ) : (
-        <DialogTrigger 
+        <DialogTrigger
           render={
-            <Button variant="ghost" size="icon" className="text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full" title="Change Password" />
+            <Button
+              variant="ghost"
+              size="icon"
+              className="text-muted-foreground hover:text-foreground hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-full"
+              title="Change Password"
+            />
           }
         >
           <KeyRound className="h-4 w-4" />
         </DialogTrigger>
       )}
       <DialogContent className="sm:max-w-[425px]">
-        <form method="POST" onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit}>
           <DialogHeader>
             <DialogTitle>Change Password</DialogTitle>
             <DialogDescription>
@@ -67,6 +77,7 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Must include A-Z, 0-9, and special char"
+                autoComplete="new-password"
                 required
               />
             </div>
@@ -78,6 +89,7 @@ export function ChangePasswordDialog({ triggerComponent }: { triggerComponent?: 
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Re-enter your new password"
+                autoComplete="new-password"
                 required
               />
             </div>

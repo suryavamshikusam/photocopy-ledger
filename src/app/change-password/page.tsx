@@ -8,16 +8,37 @@ import { changePassword } from "../actions/auth"
 import { toast } from "sonner"
 import { useState } from "react"
 
+function isNextRedirectError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const e = err as { message?: unknown; digest?: unknown }
+  return (
+    e.message === 'NEXT_REDIRECT' ||
+    (typeof e.digest === 'string' && e.digest.startsWith('NEXT_REDIRECT'))
+  )
+}
+
 export default function ChangePasswordPage() {
   const [loading, setLoading] = useState(false)
 
-  async function handleSubmit(formData: FormData) {
+  async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (loading) return
     setLoading(true)
-    const result = await changePassword(formData)
-    if (result?.error) {
-      toast.error(result.error)
+
+    try {
+      const formData = new FormData(e.currentTarget)
+      const result = await changePassword(formData)
+      if (result?.error) {
+        toast.error(result.error)
+        setLoading(false)
+      }
+    } catch (err: unknown) {
+      if (isNextRedirectError(err)) {
+        return
+      }
+      toast.error('An unexpected error occurred while updating your password.')
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   return (
@@ -29,16 +50,17 @@ export default function ChangePasswordPage() {
             You must change your default password before continuing.
           </CardDescription>
         </CardHeader>
-        <form method="POST" action={handleSubmit}>
+        <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
               <Label htmlFor="password">New Password</Label>
-              <Input 
-                id="password" 
-                name="password" 
-                type="password" 
-                required 
+              <Input
+                id="password"
+                name="password"
+                type="password"
+                required
                 minLength={8}
+                autoComplete="new-password"
               />
               <p className="text-xs text-muted-foreground">
                 Must be at least 8 characters, with 1 uppercase, 1 number, and 1 special character.
@@ -46,11 +68,12 @@ export default function ChangePasswordPage() {
             </div>
             <div className="space-y-2">
               <Label htmlFor="confirmPassword">Confirm Password</Label>
-              <Input 
-                id="confirmPassword" 
-                name="confirmPassword" 
-                type="password" 
-                required 
+              <Input
+                id="confirmPassword"
+                name="confirmPassword"
+                type="password"
+                required
+                autoComplete="new-password"
               />
             </div>
           </CardContent>

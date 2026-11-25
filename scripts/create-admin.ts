@@ -38,8 +38,15 @@ async function createAdmin() {
 
   let userId = authData?.user?.id;
   if (!userId) {
-    const { data: { users } } = await supabase.auth.admin.listUsers();
-    userId = users.find(u => u.email === email)?.id;
+    let page = 1;
+    const perPage = 1000;
+    while (!userId) {
+      const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+      if (error || !data?.users?.length) break;
+      userId = data.users.find((u) => u.email?.toLowerCase() === email.toLowerCase())?.id;
+      if (data.users.length < perPage) break;
+      page++;
+    }
   }
 
   if (userId) {

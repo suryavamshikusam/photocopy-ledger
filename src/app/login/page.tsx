@@ -2,11 +2,20 @@
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { login } from "../actions/auth"
 import { toast } from "sonner"
 import { useState } from "react"
+
+function isNextRedirectError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const e = err as { message?: unknown; digest?: unknown }
+  return (
+    e.message === 'NEXT_REDIRECT' ||
+    (typeof e.digest === 'string' && e.digest.startsWith('NEXT_REDIRECT'))
+  )
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -28,8 +37,8 @@ export default function LoginPage() {
         toast.error(result.error)
         setLoading(false)
       }
-    } catch (err: any) {
-      if (err?.message === 'NEXT_REDIRECT' || err?.digest?.startsWith('NEXT_REDIRECT')) {
+    } catch (err: unknown) {
+      if (isNextRedirectError(err)) {
         return
       }
       toast.error('An unexpected error occurred. Please try again.')
@@ -39,21 +48,19 @@ export default function LoginPage() {
 
   return (
     <div className="flex min-h-screen bg-slate-50">
-      
       {/* Left Side: Image / Hero Section */}
       <div className="hidden lg:flex lg:w-1/2 relative bg-slate-200">
-        {/* Replace the src with your uploaded image in the public folder, e.g., '/sai-baba.jpg' */}
         <div className="absolute inset-0 bg-slate-900">
-          <img 
-            src="/hero-image.jpg" 
-            alt="Hero Background" 
+          <img
+            src="/hero-image.jpg"
+            alt="Hero Background"
             className="absolute inset-0 w-full h-full object-cover opacity-80"
             onError={(e) => {
-              e.currentTarget.style.display = 'none';
+              e.currentTarget.style.display = 'none'
             }}
           />
         </div>
-        
+
         {/* Overlay Text on Image */}
         <div className="relative z-10 flex flex-col justify-end p-12 w-full text-white bg-gradient-to-t from-black/80 via-black/40 to-transparent">
           <p className="text-xl font-medium mb-1 text-slate-300">Sairam</p>
@@ -63,7 +70,6 @@ export default function LoginPage() {
 
       {/* Right Side: Login Form */}
       <div className="flex flex-col justify-center items-center w-full lg:w-1/2 p-4 relative overflow-hidden">
-        
         {/* Subtle Background Effects for the right side */}
         <div className="absolute top-[-10%] right-[-10%] w-96 h-96 bg-indigo-500/10 rounded-full blur-[100px] pointer-events-none" />
         <div className="absolute bottom-[-10%] left-[-10%] w-[30rem] h-[30rem] bg-sky-400/10 rounded-full blur-[120px] pointer-events-none" />
@@ -82,18 +88,18 @@ export default function LoginPage() {
             <CardHeader className="space-y-1 pb-6 pt-8">
               <CardTitle className="text-xl font-semibold tracking-tight text-center text-slate-800">Sign In</CardTitle>
             </CardHeader>
-            <form method="POST" onSubmit={handleSubmit}>
+            <form onSubmit={handleSubmit}>
               <CardContent className="space-y-5 px-8">
                 <div className="space-y-2">
                   <Label htmlFor="email" className="text-slate-700 font-medium">Email Address</Label>
-                  <Input 
-                    id="email" 
-                    name="email" 
-                    type="email" 
+                  <Input
+                    id="email"
+                    name="email"
+                    type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    placeholder="m@example.com" 
-                    required 
+                    placeholder="m@example.com"
+                    required
                     autoComplete="email"
                     className="bg-white/50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:ring-indigo-500 h-11 shadow-inner"
                   />
@@ -101,24 +107,32 @@ export default function LoginPage() {
                 <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="password" className="text-slate-700 font-medium">Password</Label>
-                    <span className="text-xs text-indigo-600 hover:text-indigo-500 cursor-pointer transition-colors font-medium">Forgot password?</span>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        toast.info('Please contact your photocopy ledger administrator to reset your password.')
+                      }
+                      className="text-xs text-indigo-600 hover:text-indigo-500 cursor-pointer transition-colors font-medium"
+                    >
+                      Forgot password?
+                    </button>
                   </div>
-                  <Input 
-                    id="password" 
-                    name="password" 
-                    type="password" 
+                  <Input
+                    id="password"
+                    name="password"
+                    type="password"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
-                    required 
+                    required
                     autoComplete="current-password"
                     className="bg-white/50 border-slate-200 text-slate-900 placeholder:text-slate-400 focus-visible:ring-indigo-500 h-11 shadow-inner"
                   />
                 </div>
               </CardContent>
               <CardFooter className="px-8 pb-8 pt-4">
-                <Button 
-                  className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]" 
-                  type="submit" 
+                <Button
+                  className="w-full h-11 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold shadow-lg shadow-indigo-600/20 transition-all active:scale-[0.98]"
+                  type="submit"
                   loading={loading}
                   loadingText="Signing in..."
                 >
@@ -132,4 +146,3 @@ export default function LoginPage() {
     </div>
   )
 }
-

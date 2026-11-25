@@ -1,14 +1,57 @@
 import { createClient } from "@/lib/supabase/server"
 import { redirect } from "next/navigation"
-import AdminClient from "./AdminClient"
+import AdminClient, { type AdminMetrics, type Profile } from "./AdminClient"
 import { ShieldCheck } from "lucide-react"
 import { ChangePasswordDialog } from "@/components/ChangePasswordDialog"
 import { SignOutButton } from "@/components/SignOutButton"
+import { getInitials, isAdminCorrectionNote } from "@/lib/format"
+
+type TransactionMetricRow = {
+  type: 'deposit' | 'deduction'
+  amount: string | number
+  note: string | null
+}
+
+async function fetchAllTransactionsPaginated(
+  supabase: Awaited<ReturnType<typeof createClient>>
+): Promise<{ rows: TransactionMetricRow[]; error: string | null }> {
+  const PAGE_SIZE = 1000
+  const allRows: TransactionMetricRow[] = []
+  let from = 0
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('type, amount, note')
+      .order('created_at', { ascending: true })
+      .range(from, from + PAGE_SIZE - 1)
+
+    if (error) {
+      return { rows: allRows, error: error.message }
+    }
+
+    if (!data || data.length === 0) {
+      break
+    }
+
+    allRows.push(...(data as TransactionMetricRow[]))
+
+    if (data.length < PAGE_SIZE) {
+      break
+    }
+
+    from += PAGE_SIZE
+  }
+
+  return { rows: allRows, error: null }
+}
 
 export default async function AdminPage() {
   const supabase = await createClient()
 
-  const { data: { user } } = await supabase.auth.getUser()
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
   if (!user) {
     redirect('/login')
   }
@@ -25,84 +68,88 @@ export default async function AdminPage() {
   }
 
   // Fetch all students
-  const { data: users } = await supabase
+  const { data: usersData, error: usersError } = await supabase
     .from('profiles')
-    .select('*')
+    .select('id, full_name, email, current_balance')
     .eq('role', 'student')
     .order('full_name', { ascending: true })
 
-  // Fetch all transactions to calculate global metrics
-  const { data: transactions } = await supabase
-    .from('transactions')
-    .select('type, amount, note')
+  const users: Profile[] = (usersData || []).map((u) => ({
+    id: u.id,
+    full_name: u.full_name,
+    email: u.email,
+    current_balance: parseFloat(String(u.current_balance)) || 0,
+  }))
 
-  let totalDeposits = 0
-  let totalSpent = 0
+  let metrics: AdminMetrics = {
+    totalDeposits: 0,
+    totalSpent: 0,
+    netBalance: 0,
+    lowBalanceCount: 0,
+  }
+  let metricsError: string | null = null
 
-  if (transactions) {
-    transactions.forEach(tx => {
-      const amt = parseFloat(tx.amount)
+  // Prefer server-side Postgres RPC aggregation; fall back to paginated fetch if RPC is not yet migrated
+  const { data: rpcMetrics, error: rpcError } = await supabase.rpc('get_admin_metrics')
+
+  if (!rpcError && Array.isArray(rpcMetrics) && rpcMetrics.length > 0) {
+    const row = rpcMetrics[0]
+    metrics = {
+      totalDeposits: parseFloat(String(row.total_deposits)) || 0,
+      totalSpent: parseFloat(String(row.total_spent)) || 0,
+      netBalance: parseFloat(String(row.net_balance)) || 0,
+      lowBalanceCount: Number(row.low_balance_count) || 0,
+    }
+  } else {
+    const { rows: transactions, error: txError } = await fetchAllTransactionsPaginated(supabase)
+    if (txError) {
+      metricsError = txError
+    }
+
+    let totalDeposits = 0
+    let totalSpent = 0
+
+    for (const tx of transactions) {
+      const amt = parseFloat(String(tx.amount)) || 0
       const note = tx.note || ''
-      const isCorrection = note.startsWith('Correction by Admin:') || note.toLowerCase().includes('correction')
 
-      if (isCorrection) {
-        // If the error was on a deposit
-        if (note.includes('entered as a deposit in error') || (!note.includes('entered as a deduction in error') && tx.type === 'deduction')) {
-          if (tx.type === 'deduction') {
-            // Over-deposited initially -> deducting the excess, so reduce totalDeposits (NOT counted as spent)
-            totalDeposits -= amt
-          } else {
-            // Under-deposited initially -> depositing the missing portion
-            totalDeposits += amt
-          }
-        } 
-        // If the error was on a deduction (actual printing spent)
-        else if (note.includes('entered as a deduction in error')) {
-          if (tx.type === 'deposit') {
-            // Over-deducted initially -> refunding the excess, so reduce totalSpent
-            totalSpent -= amt
-          } else {
-            // Under-deducted initially -> deducting the missing portion
-            totalSpent += amt
-          }
-        }
-      } else {
-        // Regular transactions
-        if (tx.type === 'deposit') {
+      if (isAdminCorrectionNote(note)) {
+        if (note.includes('entered as a deposit in error')) {
+          totalDeposits += tx.type === 'deduction' ? -amt : amt
+        } else if (note.includes('entered as a deduction in error')) {
+          totalSpent += tx.type === 'deposit' ? -amt : amt
+        } else if (tx.type === 'deposit') {
           totalDeposits += amt
         } else if (tx.type === 'deduction') {
           totalSpent += amt
         }
+      } else if (tx.type === 'deposit') {
+        totalDeposits += amt
+      } else if (tx.type === 'deduction') {
+        totalSpent += amt
       }
-    })
+    }
+
+    let netBalance = 0
+    let lowBalanceCount = 0
+
+    for (const u of users) {
+      netBalance += u.current_balance
+      if (u.current_balance < 50) lowBalanceCount++
+    }
+
+    metrics = {
+      totalDeposits: Math.max(0, totalDeposits),
+      totalSpent: Math.max(0, totalSpent),
+      netBalance,
+      lowBalanceCount,
+    }
   }
 
-  totalDeposits = Math.max(0, totalDeposits)
-  totalSpent = Math.max(0, totalSpent)
-
-  let netBalance = 0
-  let lowBalanceCount = 0
-
-  if (users) {
-    users.forEach(u => {
-      const bal = parseFloat(u.current_balance)
-      netBalance += bal
-      if (bal < 50) lowBalanceCount++
-    })
-  }
-
-  const metrics = {
-    totalDeposits,
-    totalSpent,
-    netBalance,
-    lowBalanceCount
-  }
-
-  const initials = profile.full_name.split(' ').map((n: string) => n[0]).join('').substring(0, 2).toUpperCase()
+  const initials = getInitials(profile.full_name)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-white to-blue-50 dark:from-zinc-950 dark:via-zinc-950 dark:to-slate-900">
-      
       {/* Header Navigation */}
       <header className="sticky top-0 z-50 w-full border-b bg-white/60 dark:bg-zinc-950/60 backdrop-blur-xl supports-[backdrop-filter]:bg-white/60">
         <div className="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
@@ -110,7 +157,12 @@ export default async function AdminPage() {
             <div className="w-8 h-8 rounded-lg border border-indigo-100 bg-white overflow-hidden shadow-md flex items-center justify-center">
               <img src="/logo.jpg" alt="Logo" className="w-full h-full object-cover" />
             </div>
-            <span className="font-bold text-lg tracking-tight">Photocopy Ledger <span className="text-indigo-600 ml-1 text-sm bg-indigo-100 px-2 py-0.5 rounded-full">Admin</span></span>
+            <span className="font-bold text-lg tracking-tight">
+              Photocopy Ledger{' '}
+              <span className="text-indigo-600 ml-1 text-sm bg-indigo-100 px-2 py-0.5 rounded-full">
+                Admin
+              </span>
+            </span>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm font-medium hidden sm:inline-block">
@@ -135,7 +187,13 @@ export default async function AdminPage() {
           </h1>
         </div>
 
-        <AdminClient users={users || []} metrics={metrics} />
+        {(usersError || metricsError) && (
+          <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-900 dark:bg-red-950/40 dark:text-red-300">
+            Some dashboard data failed to load: {usersError?.message || metricsError}
+          </div>
+        )}
+
+        <AdminClient users={users} metrics={metrics} />
       </main>
     </div>
   )

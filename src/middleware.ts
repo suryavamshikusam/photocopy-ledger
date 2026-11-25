@@ -1,83 +1,94 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
+import { getSupabasePublicEnv } from '@/lib/env'
+
+function redirectWithCookies(targetUrl: URL, sourceResponse: NextResponse) {
+  const redirectResponse = NextResponse.redirect(targetUrl)
+  sourceResponse.cookies.getAll().forEach((cookie) => {
+    redirectResponse.cookies.set(cookie)
+  })
+  return redirectResponse
+}
 
 export async function middleware(request: NextRequest) {
   let supabaseResponse = NextResponse.next({
     request,
   })
 
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll()
-        },
-        setAll(cookiesToSet) {
-          cookiesToSet.forEach(({ name, value, options }) => request.cookies.set(name, value))
-          supabaseResponse = NextResponse.next({
-            request,
-          })
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          )
-        },
+  const { url: supabaseUrl, anonKey: supabaseAnonKey } = getSupabasePublicEnv()
+
+  const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
+    cookies: {
+      getAll() {
+        return request.cookies.getAll()
       },
-    }
-  )
+      setAll(cookiesToSet) {
+        cookiesToSet.forEach(({ name, value }) => request.cookies.set(name, value))
+        supabaseResponse = NextResponse.next({
+          request,
+        })
+        cookiesToSet.forEach(({ name, value, options }) =>
+          supabaseResponse.cookies.set(name, value, options)
+        )
+      },
+    },
+  })
 
   const {
     data: { user },
   } = await supabase.auth.getUser()
 
   const url = request.nextUrl.clone()
-  
-  // Public routes that don't need auth checking for redirect (e.g. login, api routes)
-  if (url.pathname.startsWith('/login') || url.pathname.startsWith('/api') || url.pathname.startsWith('/_next')) {
-    if (user && url.pathname === '/login') {
-      // If user is logged in and tries to access login page, redirect them.
-      // But we need to know where to redirect them (admin or student).
-      // We will handle this by simply redirecting to a check route or dashboard and letting it route.
-      url.pathname = '/dashboard'
-      return NextResponse.redirect(url)
-    }
+
+  // Allow API and Next.js internal routes directly
+  if (url.pathname.startsWith('/api') || url.pathname.startsWith('/_next')) {
     return supabaseResponse
   }
 
-  // If there's no user, redirect to login
+  // Unauthenticated users can only access /login
   if (!user) {
+    if (url.pathname.startsWith('/login')) {
+      return supabaseResponse
+    }
     url.pathname = '/login'
-    return NextResponse.redirect(url)
+    return redirectWithCookies(url, supabaseResponse)
   }
 
-  // Fetch the user's profile to check role and must_change_password flag
+  // Fetch the authenticated user's profile to check role and must_change_password flag
   const { data: profile } = await supabase
     .from('profiles')
     .select('role, must_change_password')
     .eq('id', user.id)
     .single()
 
+  const homePath = profile?.role === 'admin' ? '/admin' : '/dashboard'
+
   // Handle password reset enforcement
   if (profile?.must_change_password && url.pathname !== '/change-password') {
     url.pathname = '/change-password'
-    return NextResponse.redirect(url)
+    return redirectWithCookies(url, supabaseResponse)
   }
-  
+
   if (!profile?.must_change_password && url.pathname === '/change-password') {
-    url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
+    url.pathname = homePath
+    return redirectWithCookies(url, supabaseResponse)
+  }
+
+  // Redirect already authenticated users away from /login to their proper home route
+  if (url.pathname.startsWith('/login')) {
+    url.pathname = homePath
+    return redirectWithCookies(url, supabaseResponse)
   }
 
   // Handle Role-Based Access Control (RBAC)
   if (url.pathname.startsWith('/admin') && profile?.role !== 'admin') {
     url.pathname = '/dashboard'
-    return NextResponse.redirect(url)
+    return redirectWithCookies(url, supabaseResponse)
   }
 
   if (url.pathname === '/') {
-    url.pathname = profile?.role === 'admin' ? '/admin' : '/dashboard'
-    return NextResponse.redirect(url)
+    url.pathname = homePath
+    return redirectWithCookies(url, supabaseResponse)
   }
 
   return supabaseResponse

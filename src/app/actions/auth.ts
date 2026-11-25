@@ -1,11 +1,23 @@
 'use server'
 
 import { createClient } from '@/lib/supabase/server'
+import { getSupabasePublicEnv, getSupabaseServiceRoleKey } from '@/lib/env'
 import { redirect } from 'next/navigation'
 
+const PASSWORD_REGEX =
+  /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/
+
+const PASSWORD_POLICY_ERROR =
+  'Password must be at least 8 characters, include an uppercase letter, a number, and a special character.'
+
 export async function login(formData: FormData) {
-  const email = formData.get('email') as string
-  const password = formData.get('password') as string
+  const email = String(formData.get('email') ?? '').trim()
+  const password = String(formData.get('password') ?? '')
+
+  if (!email || !password) {
+    return { error: 'Please enter both email and password.' }
+  }
+
   const supabase = await createClient()
 
   const { error } = await supabase.auth.signInWithPassword({
@@ -17,7 +29,7 @@ export async function login(formData: FormData) {
     return { error: error.message }
   }
 
-  // Redirect will be handled by middleware or client based on role/password flag
+  // Redirect will be routed by middleware / home page based on role and password flag
   redirect('/')
 }
 
@@ -28,88 +40,138 @@ export async function logout() {
 }
 
 export async function changePassword(formData: FormData) {
-  const password = formData.get('password') as string
-  const confirmPassword = formData.get('confirmPassword') as string
+  const password = String(formData.get('password') ?? '')
+  const confirmPassword = String(formData.get('confirmPassword') ?? '')
   const supabase = await createClient()
 
   if (password !== confirmPassword) {
     return { error: 'Passwords do not match.' }
   }
 
-  // Validate password policy: Min 8 chars, 1 uppercase, 1 number, 1 special char
-  const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/
-  if (!passwordRegex.test(password)) {
-    return { error: 'Password must be at least 8 characters, include an uppercase letter, a number, and a special character.' }
+  if (!PASSWORD_REGEX.test(password)) {
+    return { error: PASSWORD_POLICY_ERROR }
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: 'Not authenticated. Please sign in again.' }
   }
 
   // 1. Update auth.users password
   const { error: updateError } = await supabase.auth.updateUser({
-    password: password
+    password,
   })
 
   if (updateError) {
     return { error: updateError.message }
   }
 
-  const { data: { user } } = await supabase.auth.getUser()
+  // 2. Clear must_change_password flag and verify the DB update succeeded
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .update({ must_change_password: false })
+    .eq('id', user.id)
 
-  if (user) {
-    // 2. Clear must_change_password flag
-    await supabase.from('profiles').update({ must_change_password: false }).eq('id', user.id)
+  if (profileError) {
+    return {
+      error: `Password updated, but failed to update account status: ${profileError.message}`,
+    }
   }
 
   redirect('/')
 }
 
-export async function changePasswordInline(password: string, confirmPassword: string) {
+export async function changePasswordInline(
+  password: string,
+  confirmPassword: string
+) {
   const supabase = await createClient()
 
   if (password !== confirmPassword) {
     return { error: 'Passwords do not match.' }
   }
 
-  const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]).{8,}$/
-  if (!passwordRegex.test(password)) {
-    return { error: 'Password must be at least 8 characters, include an uppercase letter, a number, and a special character.' }
+  if (!PASSWORD_REGEX.test(password)) {
+    return { error: PASSWORD_POLICY_ERROR }
+  }
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser()
+
+  if (!user) {
+    return { error: 'Not authenticated. Please sign in again.' }
   }
 
   const { error: updateError } = await supabase.auth.updateUser({
-    password: password
+    password,
   })
 
   if (updateError) {
     return { error: updateError.message }
   }
 
-  const { data: { user } } = await supabase.auth.getUser()
-  if (user) {
-    await supabase.from('profiles').update({ must_change_password: false }).eq('id', user.id)
+  const { error: profileError } = await supabase
+    .from('profiles')
+    .update({ must_change_password: false })
+    .eq('id', user.id)
+
+  if (profileError) {
+    return { error: profileError.message }
   }
 
   return { success: true }
 }
 
-export async function adminResetUserPassword(userId: string, newPassword: string) {
+export async function adminResetUserPassword(
+  userId: string,
+  newPassword: string
+) {
   const supabase = await createClient()
 
   // 1. Verify caller is admin
-  const { data: { user: currentUser } } = await supabase.auth.getUser()
+  const {
+    data: { user: currentUser },
+  } = await supabase.auth.getUser()
   if (!currentUser) return { error: 'Not authenticated' }
 
-  const { data: profile } = await supabase.from('profiles').select('role').eq('id', currentUser.id).single()
-  if (profile?.role !== 'admin') return { error: 'Unauthorized. Only admins can reset passwords.' }
+  const { data: profile } = await supabase
+    .from('profiles')
+    .select('role')
+    .eq('id', currentUser.id)
+    .single()
+  if (profile?.role !== 'admin') {
+    return { error: 'Unauthorized. Only admins can reset passwords.' }
+  }
 
-  // 2. Initialize admin client with service role key
-  const { createClient: createAdminClient } = await import('@supabase/supabase-js')
-  const adminClient = createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  if (!userId || !userId.trim()) {
+    return { error: 'Invalid target user ID.' }
+  }
+
+  if (!PASSWORD_REGEX.test(newPassword)) {
+    return { error: PASSWORD_POLICY_ERROR }
+  }
+
+  // 2. Initialize admin client with validated env vars
+  const { url } = getSupabasePublicEnv()
+  const serviceRoleKey = getSupabaseServiceRoleKey()
+  const { createClient: createAdminClient } = await import(
+    '@supabase/supabase-js'
   )
+  const adminClient = createAdminClient(url, serviceRoleKey, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  })
 
   // 3. Update the user's password via the admin auth API
-  const { error: authError } = await adminClient.auth.admin.updateUserById(userId, {
-    password: newPassword
-  })
+  const { error: authError } = await adminClient.auth.admin.updateUserById(
+    userId,
+    {
+      password: newPassword,
+    }
+  )
 
   if (authError) {
     return { error: authError.message }

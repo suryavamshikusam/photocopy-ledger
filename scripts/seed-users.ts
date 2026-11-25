@@ -91,14 +91,33 @@ function parseEmailString(input: string) {
   const match = input.match(emailRegex);
   
   if (match) {
-    const email = match[1].trim();
+    const email = match[1].trim().toLowerCase();
     const name = input.replace(emailRegex, '').trim().replace(/^"|"$/g, '').trim();
     return { email, name: name || email.split('@')[0] };
   }
   
   // If no brackets, treat whole string as email
-  const cleanEmail = input.trim();
+  const cleanEmail = input.trim().toLowerCase();
   return { email: cleanEmail, name: cleanEmail.split('@')[0] };
+}
+
+async function findAuthUserIdByEmail(email: string): Promise<string | undefined> {
+  const target = email.toLowerCase();
+  let page = 1;
+  const perPage = 1000;
+
+  while (true) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error || !data?.users?.length) break;
+
+    const match = data.users.find((u) => u.email?.toLowerCase() === target);
+    if (match) return match.id;
+
+    if (data.users.length < perPage) break;
+    page++;
+  }
+
+  return undefined;
 }
 
 async function seedUsers() {
@@ -130,16 +149,7 @@ async function seedUsers() {
       // If user already existed, let's fetch their ID.
       let userId = authData?.user?.id;
       if (!userId) {
-          // Fetch existing user by email via admin API
-          // Note: listUsers is paginated, for robust usage in a huge list we'd need to search, 
-          // but there's no direct get user by email in standard supabase-js admin. 
-          // An alternative is trying to upsert using a DB function, but for this script, 
-          // we'll assume a fresh run or we can ignore existing profiles.
-          const { data: { users } } = await supabase.auth.admin.listUsers();
-          const existingUser = users.find(u => u.email === email);
-          if (existingUser) {
-              userId = existingUser.id;
-          }
+        userId = await findAuthUserIdByEmail(email);
       }
 
       if (userId) {

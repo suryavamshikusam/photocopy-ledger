@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
@@ -10,22 +10,93 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { toast } from "sonner"
 import { createTransaction, createBulkTransactions, getUserTransactions } from '../actions/transaction'
-import { Search, Users, ReceiptText, Loader2, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
+import { Search, Users, ReceiptText, Filter, ArrowUpDown, ArrowUp, ArrowDown, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
-import { format } from "date-fns"
-import { AppleSpinner, AppleLoadingCard } from '@/components/ui/apple-spinner'
+import { AppleLoadingCard } from '@/components/ui/apple-spinner'
+import { formatLedgerDate, isAdminCorrectionNote } from '@/lib/format'
 import Fuse from 'fuse.js'
 
-type Profile = {
-  id: string;
-  full_name: string;
-  email: string;
-  current_balance: number;
+export type Profile = {
+  id: string
+  full_name: string
+  email: string
+  current_balance: number
 }
 
-export default function AdminClient({ users, metrics }: { users: Profile[], metrics: any }) {
+export type AdminMetrics = {
+  totalDeposits: number
+  totalSpent: number
+  netBalance: number
+  lowBalanceCount: number
+}
+
+type TransactionRecord = {
+  id: string
+  user_id: string
+  admin_id: string
+  type: 'deposit' | 'deduction'
+  amount: string | number
+  balance_after: string | number
+  note: string | null
+  created_at: string
+}
+
+function parseTransactionForm(formData: FormData): {
+  error?: string
+  finalType?: 'deposit' | 'deduction'
+  finalAmount?: number
+  finalNote?: string
+} {
+  const type = formData.get('type') as 'deposit' | 'deduction' | 'correction'
+
+  if (type === 'correction') {
+    const mistakeType = formData.get('mistakeType') as 'deposit' | 'deduction'
+    const originalAmount = parseFloat(String(formData.get('originalAmount') ?? ''))
+    const correctAmount = parseFloat(String(formData.get('correctAmount') ?? ''))
+
+    if (!Number.isFinite(originalAmount) || originalAmount <= 0 || !Number.isFinite(correctAmount) || correctAmount < 0) {
+      return { error: 'Please enter valid amounts for correction (original > 0, correct ≥ 0)' }
+    }
+    if (originalAmount === correctAmount) {
+      return { error: 'Original and correct amount are the same' }
+    }
+
+    const diff = correctAmount - originalAmount
+    const finalType: 'deposit' | 'deduction' =
+      mistakeType === 'deposit'
+        ? diff > 0
+          ? 'deposit'
+          : 'deduction'
+        : diff > 0
+          ? 'deduction'
+          : 'deposit'
+    const finalAmount = Math.round(Math.abs(diff) * 100) / 100
+    const finalNote = `Correction by Admin: Initially ₹${originalAmount} was entered as a ${mistakeType} in error. Corrected to ₹${correctAmount}.`
+
+    return { finalType, finalAmount, finalNote }
+  }
+
+  if (type !== 'deposit' && type !== 'deduction') {
+    return { error: 'Please select a valid transaction type' }
+  }
+
+  const rawAmount = parseFloat(String(formData.get('amount') ?? ''))
+  const finalAmount = Math.round(rawAmount * 100) / 100
+  const finalNote = String(formData.get('note') ?? '').trim()
+
+  if (!Number.isFinite(finalAmount) || finalAmount <= 0) {
+    return { error: 'Please enter a valid amount' }
+  }
+  if (!finalNote) {
+    return { error: 'Note/Reason is mandatory' }
+  }
+
+  return { finalType: type, finalAmount, finalNote }
+}
+
+export default function AdminClient({ users, metrics }: { users: Profile[]; metrics: AdminMetrics }) {
   const [searchTerm, setSearchTerm] = useState('')
   const [balanceFilter, setBalanceFilter] = useState<string>('all')
   const [balanceSortOrder, setBalanceSortOrder] = useState<'none' | 'asc' | 'desc'>('none')
@@ -35,34 +106,36 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   const [isBulkMatchDialogOpen, setIsBulkMatchDialogOpen] = useState(false)
   const [bulkMatchText, setBulkMatchText] = useState('')
   const [matchingLoading, setMatchingLoading] = useState(false)
-  const [fuzzyMatches, setFuzzyMatches] = useState<Array<{
-    original: string;
-    matchedProfile: Profile | null;
-    selected: boolean;
-  }>>([])
+  const [fuzzyMatches, setFuzzyMatches] = useState<
+    Array<{
+      original: string
+      matchedProfile: Profile | null
+      selected: boolean
+    }>
+  >([])
   const [loading, setLoading] = useState(false)
-  
+
   const [txType, setTxType] = useState<string>('deposit')
   const [bulkTxType, setBulkTxType] = useState<string>('deposit')
-  
+
   // History modal state
   const [historyUser, setHistoryUser] = useState<Profile | null>(null)
   const [isHistoryDialogOpen, setIsHistoryDialogOpen] = useState(false)
-  const [userTransactions, setUserTransactions] = useState<any[]>([])
+  const [userTransactions, setUserTransactions] = useState<TransactionRecord[]>([])
   const [historyLoading, setHistoryLoading] = useState(false)
 
   // Selection state
   const [selectedUserIds, setSelectedUserIds] = useState<Set<string>>(new Set())
 
   const filteredUsers = useMemo(() => {
-    let result = users.filter(u => {
-      const matchesSearch = 
-        u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+    let result = users.filter((u) => {
+      const matchesSearch =
+        u.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
         u.email.toLowerCase().includes(searchTerm.toLowerCase())
-      
+
       if (!matchesSearch) return false
 
-      const bal = parseFloat(u.current_balance as unknown as string) || 0
+      const bal = parseFloat(String(u.current_balance)) || 0
       if (balanceFilter === 'low') {
         return bal < 50
       } else if (balanceFilter === 'critical') {
@@ -74,9 +147,13 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     })
 
     if (balanceSortOrder === 'asc') {
-      result = [...result].sort((a, b) => (parseFloat(a.current_balance as unknown as string) || 0) - (parseFloat(b.current_balance as unknown as string) || 0))
+      result = [...result].sort(
+        (a, b) => (parseFloat(String(a.current_balance)) || 0) - (parseFloat(String(b.current_balance)) || 0)
+      )
     } else if (balanceSortOrder === 'desc') {
-      result = [...result].sort((a, b) => (parseFloat(b.current_balance as unknown as string) || 0) - (parseFloat(a.current_balance as unknown as string) || 0))
+      result = [...result].sort(
+        (a, b) => (parseFloat(String(b.current_balance)) || 0) - (parseFloat(String(a.current_balance)) || 0)
+      )
     }
 
     return result
@@ -84,29 +161,42 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
 
   const handleOpenDialog = (user: Profile) => {
     setSelectedUser(user)
+    setTxType('deposit')
     setIsDialogOpen(true)
+  }
+
+  const handleOpenBulkDialog = () => {
+    setBulkTxType('deposit')
+    setIsBulkDialogOpen(true)
   }
 
   const handleOpenHistory = async (user: Profile) => {
     setHistoryUser(user)
+    setUserTransactions([])
     setIsHistoryDialogOpen(true)
     setHistoryLoading(true)
-    const res = await getUserTransactions(user.id)
-    if (res.error) {
+    try {
+      const res = await getUserTransactions(user.id)
+      if (res.error) {
+        toast.error('Failed to load transaction history')
+      } else {
+        setUserTransactions(res.transactions as TransactionRecord[])
+      }
+    } catch {
       toast.error('Failed to load transaction history')
-    } else {
-      setUserTransactions(res.transactions)
+    } finally {
+      setHistoryLoading(false)
     }
-    setHistoryLoading(false)
   }
 
   const handleSelectAll = (checked: boolean) => {
+    const newSelected = new Set(selectedUserIds)
     if (checked) {
-      const allIds = new Set(filteredUsers.map(u => u.id))
-      setSelectedUserIds(allIds)
+      filteredUsers.forEach((u) => newSelected.add(u.id))
     } else {
-      setSelectedUserIds(new Set())
+      filteredUsers.forEach((u) => newSelected.delete(u.id))
     }
+    setSelectedUserIds(newSelected)
   }
 
   const handleSelectUser = (id: string, checked: boolean) => {
@@ -120,23 +210,26 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
   }
 
   const handleBulkMatch = async () => {
-    const names = bulkMatchText.split('\n').map(n => n.trim()).filter(n => n)
+    const names = bulkMatchText
+      .split('\n')
+      .map((n) => n.trim())
+      .filter((n) => n)
     if (names.length === 0) return
 
     setMatchingLoading(true)
-    await new Promise(r => setTimeout(r, 150))
+    await new Promise((r) => setTimeout(r, 150))
 
     const fuse = new Fuse(users, {
       keys: ['full_name', 'email'],
       threshold: 0.4,
     })
 
-    const matches = names.map(name => {
+    const matches = names.map((name) => {
       const result = fuse.search(name)
       return {
         original: name,
         matchedProfile: result.length > 0 ? result[0].item : null,
-        selected: result.length > 0
+        selected: result.length > 0,
       }
     })
 
@@ -146,7 +239,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
 
   const confirmBulkMatch = () => {
     const newSelected = new Set(selectedUserIds)
-    fuzzyMatches.forEach(m => {
+    fuzzyMatches.forEach((m) => {
       if (m.selected && m.matchedProfile) {
         newSelected.add(m.matchedProfile.id)
       }
@@ -158,131 +251,82 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
     toast.success('Students added to selection')
   }
 
-  const handleTransaction = async (formData: FormData) => {
-    if (!selectedUser) return
+  const handleTransaction = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (!selectedUser || loading) return
+
+    const formData = new FormData(e.currentTarget)
+    const parsed = parseTransactionForm(formData)
+    if (parsed.error || !parsed.finalType || !parsed.finalAmount || !parsed.finalNote) {
+      toast.error(parsed.error || 'Invalid transaction details')
+      return
+    }
+
     setLoading(true)
+    try {
+      const res = await createTransaction(
+        selectedUser.id,
+        parsed.finalType,
+        parsed.finalAmount,
+        parsed.finalNote
+      )
 
-    const type = formData.get('type') as 'deposit' | 'deduction' | 'correction'
-    let finalType: 'deposit' | 'deduction'
-    let finalAmount: number
-    let finalNote: string
-
-    if (type === 'correction') {
-      const mistakeType = formData.get('mistakeType') as 'deposit' | 'deduction'
-      const originalAmount = parseFloat(formData.get('originalAmount') as string)
-      const correctAmount = parseFloat(formData.get('correctAmount') as string)
-
-      if (!originalAmount || originalAmount <= 0 || !correctAmount || correctAmount <= 0) {
-        toast.error('Please enter valid amounts for correction')
-        setLoading(false)
-        return
-      }
-      if (originalAmount === correctAmount) {
-        toast.error('Original and correct amount are the same')
-        setLoading(false)
-        return
-      }
-
-      const diff = correctAmount - originalAmount
-      if (mistakeType === 'deposit') {
-        finalType = diff > 0 ? 'deposit' : 'deduction'
+      if (res.error) {
+        toast.error(res.error)
       } else {
-        finalType = diff > 0 ? 'deduction' : 'deposit'
+        toast.success(
+          `Successfully processed ${parsed.finalType} of ₹${parsed.finalAmount.toFixed(2)} for ${selectedUser.full_name}`
+        )
+        setIsDialogOpen(false)
       }
-      finalAmount = Math.abs(diff)
-      finalNote = `Correction by Admin: Initially ₹${originalAmount} was entered as a ${mistakeType} in error. Corrected to ₹${correctAmount}.`
-    } else {
-      finalType = type
-      finalAmount = parseFloat(formData.get('amount') as string)
-      finalNote = formData.get('note') as string
-
-      if (!finalAmount || finalAmount <= 0) {
-        toast.error('Please enter a valid amount')
-        setLoading(false)
-        return
-      }
-      if (!finalNote) {
-        toast.error('Note/Reason is mandatory')
-        setLoading(false)
-        return
-      }
+    } catch {
+      toast.error('An unexpected network error occurred while processing the transaction.')
+    } finally {
+      setLoading(false)
     }
-
-    const res = await createTransaction(selectedUser.id, finalType, finalAmount, finalNote)
-    
-    if (res.error) {
-      toast.error(res.error)
-    } else {
-      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUser.full_name}`)
-      setIsDialogOpen(false)
-    }
-    setLoading(false)
   }
 
-  const handleBulkTransaction = async (formData: FormData) => {
-    if (selectedUserIds.size === 0) return
+  const handleBulkTransaction = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault()
+    if (selectedUserIds.size === 0 || loading) return
+
+    const formData = new FormData(e.currentTarget)
+    const parsed = parseTransactionForm(formData)
+    if (parsed.error || !parsed.finalType || !parsed.finalAmount || !parsed.finalNote) {
+      toast.error(parsed.error || 'Invalid transaction details')
+      return
+    }
+
     setLoading(true)
+    try {
+      const res = await createBulkTransactions(
+        Array.from(selectedUserIds),
+        parsed.finalType,
+        parsed.finalAmount,
+        parsed.finalNote
+      )
 
-    const type = formData.get('type') as 'deposit' | 'deduction' | 'correction'
-    let finalType: 'deposit' | 'deduction'
-    let finalAmount: number
-    let finalNote: string
-
-    if (type === 'correction') {
-      const mistakeType = formData.get('mistakeType') as 'deposit' | 'deduction'
-      const originalAmount = parseFloat(formData.get('originalAmount') as string)
-      const correctAmount = parseFloat(formData.get('correctAmount') as string)
-
-      if (!originalAmount || originalAmount <= 0 || !correctAmount || correctAmount <= 0) {
-        toast.error('Please enter valid amounts for correction')
-        setLoading(false)
-        return
-      }
-      if (originalAmount === correctAmount) {
-        toast.error('Original and correct amount are the same')
-        setLoading(false)
-        return
-      }
-
-      const diff = correctAmount - originalAmount
-      if (mistakeType === 'deposit') {
-        finalType = diff > 0 ? 'deposit' : 'deduction'
+      if (res.error) {
+        toast.error(res.error)
       } else {
-        finalType = diff > 0 ? 'deduction' : 'deposit'
+        toast.success(
+          `Successfully processed ${parsed.finalType} of ₹${parsed.finalAmount.toFixed(2)} for ${selectedUserIds.size} students`
+        )
+        setIsBulkDialogOpen(false)
+        setSelectedUserIds(new Set())
       }
-      finalAmount = Math.abs(diff)
-      finalNote = `Correction by Admin: Initially ₹${originalAmount} was entered as a ${mistakeType} in error. Corrected to ₹${correctAmount}.`
-    } else {
-      finalType = type
-      finalAmount = parseFloat(formData.get('amount') as string)
-      finalNote = formData.get('note') as string
-
-      if (!finalAmount || finalAmount <= 0) {
-        toast.error('Please enter a valid amount')
-        setLoading(false)
-        return
-      }
-      if (!finalNote) {
-        toast.error('Note/Reason is mandatory')
-        setLoading(false)
-        return
-      }
+    } catch {
+      toast.error('An unexpected network error occurred while processing bulk transactions.')
+    } finally {
+      setLoading(false)
     }
-
-    const res = await createBulkTransactions(Array.from(selectedUserIds), finalType, finalAmount, finalNote)
-    
-    if (res.error) {
-      toast.error(res.error)
-    } else {
-      toast.success(`Successfully processed ${finalType} of ₹${finalAmount.toFixed(2)} for ${selectedUserIds.size} students`)
-      setIsBulkDialogOpen(false)
-      setSelectedUserIds(new Set())
-    }
-    setLoading(false)
   }
 
-  const isAllSelected = filteredUsers.length > 0 && selectedUserIds.size === filteredUsers.length
-  const isIndeterminate = selectedUserIds.size > 0 && selectedUserIds.size < filteredUsers.length
+  const selectedInFilterCount = filteredUsers.filter((u) => selectedUserIds.has(u.id)).length
+  const isAllSelected = filteredUsers.length > 0 && selectedInFilterCount === filteredUsers.length
+  const isIndeterminate = selectedInFilterCount > 0 && selectedInFilterCount < filteredUsers.length
+
+  const historyBalance = historyUser ? parseFloat(String(historyUser.current_balance)) || 0 : 0
 
   return (
     <div className="space-y-6">
@@ -290,61 +334,90 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card className="border-0 shadow-md bg-gradient-to-br from-green-500/10 to-green-600/5 dark:from-green-500/20 dark:to-green-900/10 backdrop-blur-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
-            <svg className="w-16 h-16 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" /></svg>
+            <svg className="w-16 h-16 text-green-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4" />
+            </svg>
           </div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 relative z-10">
             <CardTitle className="text-sm font-medium text-green-800 dark:text-green-300">Total Deposits</CardTitle>
           </CardHeader>
           <CardContent className="relative z-10">
-            <div className="text-3xl font-extrabold text-green-600 dark:text-green-400">₹{metrics.totalDeposits.toFixed(2)}</div>
+            <div className="text-3xl font-extrabold text-green-600 dark:text-green-400">
+              ₹{metrics.totalDeposits.toFixed(2)}
+            </div>
           </CardContent>
         </Card>
-        
+
         <Card className="border-0 shadow-md bg-gradient-to-br from-red-500/10 to-red-600/5 dark:from-red-500/20 dark:to-red-900/10 backdrop-blur-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
-            <svg className="w-16 h-16 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" /></svg>
+            <svg className="w-16 h-16 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 12H4" />
+            </svg>
           </div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 relative z-10">
             <CardTitle className="text-sm font-medium text-red-800 dark:text-red-300">Total Spent</CardTitle>
           </CardHeader>
           <CardContent className="relative z-10">
-            <div className="text-3xl font-extrabold text-red-600 dark:text-red-400">₹{metrics.totalSpent.toFixed(2)}</div>
+            <div className="text-3xl font-extrabold text-red-600 dark:text-red-400">
+              ₹{metrics.totalSpent.toFixed(2)}
+            </div>
           </CardContent>
         </Card>
 
         <Card className="border-0 shadow-md bg-gradient-to-br from-indigo-500/10 to-blue-600/5 dark:from-indigo-500/20 dark:to-blue-900/10 backdrop-blur-sm relative overflow-hidden">
           <div className="absolute top-0 right-0 p-4 opacity-10">
-            <svg className="w-16 h-16 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3" /></svg>
+            <svg className="w-16 h-16 text-indigo-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M3 6l3 1m0 0l-3 9a5.002 5.002 0 006.001 0M6 7l3 9M6 7l6-2m6 2l3-1m-3 1l-3 9a5.002 5.002 0 006.001 0M18 7l3 9m-3-9l-6-2m0-2v2m0 16V5m0 16H9m3 0h3"
+              />
+            </svg>
           </div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 relative z-10">
             <CardTitle className="text-sm font-medium text-indigo-800 dark:text-indigo-300">Net System Balance</CardTitle>
           </CardHeader>
           <CardContent className="relative z-10">
-            <div className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400">₹{metrics.netBalance.toFixed(2)}</div>
+            <div className="text-3xl font-extrabold text-indigo-600 dark:text-indigo-400">
+              ₹{metrics.netBalance.toFixed(2)}
+            </div>
           </CardContent>
         </Card>
 
-        <Card 
-          onClick={() => setBalanceFilter(prev => prev === 'low' ? 'all' : 'low')}
+        <Card
+          onClick={() => setBalanceFilter((prev) => (prev === 'low' ? 'all' : 'low'))}
           className={`border-0 shadow-md bg-gradient-to-br from-orange-500/10 to-orange-600/5 dark:from-orange-500/20 dark:to-orange-900/10 backdrop-blur-sm relative overflow-hidden cursor-pointer transition-all duration-200 hover:scale-[1.02] active:scale-[0.98] ${
             balanceFilter === 'low' ? 'ring-2 ring-orange-500 shadow-orange-500/20 bg-orange-500/15' : ''
           }`}
         >
           <div className="absolute top-0 right-0 p-4 opacity-10">
-            <svg className="w-16 h-16 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+            <svg className="w-16 h-16 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"
+              />
+            </svg>
           </div>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-1 relative z-10">
             <CardTitle className="text-sm font-medium text-orange-800 dark:text-orange-300 flex items-center gap-1.5">
               <span>Low Balance (&lt; ₹50)</span>
               {balanceFilter === 'low' && (
-                <Badge variant="outline" className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300 font-semibold">
+                <Badge
+                  variant="outline"
+                  className="text-[10px] px-1.5 py-0 bg-orange-100 text-orange-800 border-orange-300 dark:bg-orange-950 dark:text-orange-300 font-semibold"
+                >
                   Filtered
                 </Badge>
               )}
             </CardTitle>
           </CardHeader>
           <CardContent className="relative z-10 flex items-baseline justify-between">
-            <div className="text-3xl font-extrabold text-orange-600 dark:text-orange-400">{metrics.lowBalanceCount}</div>
+            <div className="text-3xl font-extrabold text-orange-600 dark:text-orange-400">
+              {metrics.lowBalanceCount}
+            </div>
             <span className="text-xs text-orange-700 dark:text-orange-300 font-medium">
               {balanceFilter === 'low' ? '✕ Reset' : 'Click to filter'}
             </span>
@@ -364,8 +437,8 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             {balanceFilter !== 'all' && (
               <div className="flex items-center gap-2 mt-1.5">
                 <span className="text-xs text-slate-500">Filtered by:</span>
-                <Badge 
-                  variant="outline" 
+                <Badge
+                  variant="outline"
                   className="text-xs font-medium bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950 dark:text-amber-300 flex items-center gap-1 cursor-pointer hover:bg-amber-100 transition-colors"
                   onClick={() => setBalanceFilter('all')}
                 >
@@ -385,13 +458,24 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all" className="text-xs">All Balances</SelectItem>
-                <SelectItem value="low" className="text-xs text-orange-600 dark:text-orange-400 font-medium">⚠️ Low Balance (&lt; ₹50)</SelectItem>
-                <SelectItem value="critical" className="text-xs text-rose-600 dark:text-rose-400 font-medium">🚫 Critical (&le; ₹0)</SelectItem>
-                <SelectItem value="healthy" className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">✅ Healthy (&ge; ₹50)</SelectItem>
+                <SelectItem value="low" className="text-xs text-orange-600 dark:text-orange-400 font-medium">
+                  ⚠️ Low Balance (&lt; ₹50)
+                </SelectItem>
+                <SelectItem value="critical" className="text-xs text-rose-600 dark:text-rose-400 font-medium">
+                  🚫 Critical (&le; ₹0)
+                </SelectItem>
+                <SelectItem value="healthy" className="text-xs text-emerald-600 dark:text-emerald-400 font-medium">
+                  ✅ Healthy (&ge; ₹50)
+                </SelectItem>
               </SelectContent>
             </Select>
 
-            <Button variant="outline" size="sm" className="h-9 rounded-full px-3.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30 text-xs" onClick={() => setIsBulkMatchDialogOpen(true)}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-9 rounded-full px-3.5 border-indigo-200 text-indigo-700 hover:bg-indigo-50 dark:border-indigo-800 dark:text-indigo-400 dark:hover:bg-indigo-900/30 text-xs"
+              onClick={() => setIsBulkMatchDialogOpen(true)}
+            >
               <Users className="w-3.5 h-3.5 mr-1.5" />
               Bulk Select
             </Button>
@@ -406,7 +490,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               />
             </div>
             {selectedUserIds.size > 0 && (
-              <Button size="sm" className="h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 px-4 text-xs font-semibold" onClick={() => setIsBulkDialogOpen(true)}>
+              <Button
+                size="sm"
+                className="h-9 rounded-full bg-indigo-600 hover:bg-indigo-700 text-white shadow-md shadow-indigo-500/20 px-4 text-xs font-semibold"
+                onClick={handleOpenBulkDialog}
+              >
                 Bulk Action ({selectedUserIds.size})
               </Button>
             )}
@@ -417,19 +505,20 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
             <TableHeader>
               <TableRow className="hover:bg-transparent border-zinc-100 dark:border-zinc-800/50">
                 <TableHead className="w-12 pl-6 h-12">
-                  <Checkbox 
+                  <Checkbox
                     checked={isAllSelected}
+                    indeterminate={isIndeterminate}
                     onCheckedChange={handleSelectAll}
                     aria-label="Select all"
-                    className="border-indigo-300 data-[state=checked]:bg-indigo-600"
+                    className="border-indigo-300 data-checked:bg-indigo-600 data-checked:border-indigo-600"
                   />
                 </TableHead>
                 <TableHead className="h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Name</TableHead>
                 <TableHead className="h-12 text-xs font-semibold tracking-wide uppercase text-slate-500">Email</TableHead>
-                <TableHead 
+                <TableHead
                   className="text-right h-12 text-xs font-semibold tracking-wide uppercase text-slate-500 cursor-pointer select-none hover:text-indigo-600 transition-colors"
                   onClick={() => {
-                    setBalanceSortOrder(prev => prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none')
+                    setBalanceSortOrder((prev) => (prev === 'none' ? 'asc' : prev === 'asc' ? 'desc' : 'none'))
                   }}
                   title="Click to sort by balance"
                 >
@@ -453,9 +542,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                       </div>
                       <p className="text-slate-600 dark:text-slate-300 font-medium">No students match the current filter.</p>
                       {(balanceFilter !== 'all' || searchTerm) && (
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           className="mt-2 text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 text-xs"
                           onClick={() => {
                             setBalanceFilter('all')
@@ -470,50 +559,61 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                 </TableRow>
               ) : (
                 filteredUsers.map((u) => {
-                  const isSelected = selectedUserIds.has(u.id);
+                  const isSelected = selectedUserIds.has(u.id)
+                  const bal = parseFloat(String(u.current_balance)) || 0
                   return (
-                    <TableRow 
-                      key={u.id} 
-                      className={`cursor-pointer transition-colors border-zinc-100 dark:border-zinc-800/50 ${isSelected ? 'bg-indigo-50/50 dark:bg-indigo-900/20' : 'hover:bg-slate-50/50 dark:hover:bg-zinc-800/50'}`}
+                    <TableRow
+                      key={u.id}
+                      className={`cursor-pointer transition-colors border-zinc-100 dark:border-zinc-800/50 ${
+                        isSelected ? 'bg-indigo-50/50 dark:bg-indigo-900/20' : 'hover:bg-slate-50/50 dark:hover:bg-zinc-800/50'
+                      }`}
                       onClick={() => handleSelectUser(u.id, !isSelected)}
                     >
                       <TableCell className="pl-6 py-3" onClick={(e) => e.stopPropagation()}>
-                        <Checkbox 
+                        <Checkbox
                           checked={isSelected}
                           onCheckedChange={(checked) => handleSelectUser(u.id, !!checked)}
                           aria-label={`Select ${u.full_name}`}
-                          className="border-slate-300 data-[state=checked]:bg-indigo-600 data-[state=checked]:border-indigo-600"
+                          className="border-slate-300 data-checked:bg-indigo-600 data-checked:border-indigo-600"
                         />
                       </TableCell>
                       <TableCell className="py-3 font-semibold text-slate-800 dark:text-slate-200">{u.full_name}</TableCell>
                       <TableCell className="py-3 text-slate-500 dark:text-slate-400 text-sm">{u.email}</TableCell>
                       <TableCell className="py-3 text-right">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${u.current_balance > 50 ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400' : u.current_balance > 0 ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400' : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'}`}>
-                          ₹{parseFloat(u.current_balance as unknown as string).toFixed(2)}
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold ${
+                            bal >= 50
+                              ? 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400'
+                              : bal > 0
+                                ? 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'
+                                : 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400'
+                          }`}
+                        >
+                          ₹{bal.toFixed(2)}
                         </span>
                       </TableCell>
                       <TableCell className="pr-6 py-3 text-right">
                         <div className="flex items-center justify-end gap-2">
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-8 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-zinc-800 px-2.5 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center gap-1.5" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs font-medium text-slate-600 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-zinc-800 px-2.5 rounded-full border border-slate-200 dark:border-zinc-700 flex items-center gap-1.5"
                             onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenHistory(u);
+                              e.stopPropagation()
+                              handleOpenHistory(u)
                             }}
                             title="View Transaction History"
                           >
                             <ReceiptText className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400" />
                             History
                           </Button>
-                          <Button 
-                            variant="ghost" 
-                            size="sm" 
-                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950 px-3 rounded-full border border-indigo-200 dark:border-indigo-800/50" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 text-xs font-medium text-indigo-600 hover:text-indigo-700 hover:bg-indigo-50 dark:text-indigo-400 dark:hover:bg-indigo-950 px-3 rounded-full border border-indigo-200 dark:border-indigo-800/50"
                             onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenDialog(u);
+                              e.stopPropagation()
+                              handleOpenDialog(u)
                             }}
                           >
                             Transact
@@ -521,7 +621,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                         </div>
                       </TableCell>
                     </TableRow>
-                  );
+                  )
                 })
               )}
             </TableBody>
@@ -532,12 +632,10 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
       {/* Single Transaction Modal */}
       <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <form method="POST" action={handleTransaction}>
+          <form onSubmit={handleTransaction}>
             <DialogHeader>
               <DialogTitle>Process Transaction</DialogTitle>
-              <DialogDescription>
-                Update balance for {selectedUser?.full_name}
-              </DialogDescription>
+              <DialogDescription>Update balance for {selectedUser?.full_name}</DialogDescription>
             </DialogHeader>
             <div className="grid gap-4 py-4">
               <div className="grid gap-2">
@@ -553,7 +651,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   </SelectContent>
                 </Select>
               </div>
-              
+
               {txType === 'correction' ? (
                 <>
                   <div className="grid gap-2">
@@ -575,11 +673,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="correctAmount">True Correct Amount ₹</Label>
-                      <Input id="correctAmount" name="correctAmount" type="number" step="0.01" min="0.01" required />
+                      <Input id="correctAmount" name="correctAmount" type="number" step="0.01" min="0" required />
                     </div>
                   </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-md">
-                    System will auto-calculate the difference and post a correction transaction with a detailed note for the student.
+                  <div className="text-xs text-slate-500 bg-slate-50 dark:bg-zinc-900 p-2 rounded-md">
+                    System will auto-calculate the difference and post a correction transaction with a detailed note for the student. Enter 0 for a full reversal.
                   </div>
                 </>
               ) : (
@@ -606,11 +704,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           </form>
         </DialogContent>
       </Dialog>
-      
+
       {/* Bulk Transaction Modal */}
       <Dialog open={isBulkDialogOpen} onOpenChange={setIsBulkDialogOpen}>
         <DialogContent className="sm:max-w-[425px]">
-          <form method="POST" action={handleBulkTransaction}>
+          <form onSubmit={handleBulkTransaction}>
             <DialogHeader>
               <DialogTitle>Bulk Transaction</DialogTitle>
               <DialogDescription>
@@ -653,11 +751,11 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                     </div>
                     <div className="grid gap-2">
                       <Label htmlFor="bulk-correctAmount">True Correct Amount ₹</Label>
-                      <Input id="bulk-correctAmount" name="correctAmount" type="number" step="0.01" min="0.01" required />
+                      <Input id="bulk-correctAmount" name="correctAmount" type="number" step="0.01" min="0" required />
                     </div>
                   </div>
-                  <div className="text-xs text-slate-500 bg-slate-50 p-2 rounded-md">
-                    System will auto-calculate the difference and post a correction transaction with a detailed note for the students.
+                  <div className="text-xs text-slate-500 bg-slate-50 dark:bg-zinc-900 p-2 rounded-md">
+                    System will auto-calculate the difference and post a correction transaction with a detailed note for the students. Enter 0 for a full reversal.
                   </div>
                 </>
               ) : (
@@ -677,21 +775,29 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
               <Button type="button" variant="outline" onClick={() => setIsBulkDialogOpen(false)} disabled={loading}>
                 Cancel
               </Button>
-              <Button type="submit" loading={loading} loadingText={`Processing ${selectedUserIds.size} student${selectedUserIds.size === 1 ? '' : 's'}...`}>
+              <Button
+                type="submit"
+                loading={loading}
+                loadingText={`Processing ${selectedUserIds.size} student${selectedUserIds.size === 1 ? '' : 's'}...`}
+              >
                 Confirm for {selectedUserIds.size} Students
               </Button>
             </DialogFooter>
           </form>
         </DialogContent>
       </Dialog>
+
       {/* Bulk Match Dialog */}
-      <Dialog open={isBulkMatchDialogOpen} onOpenChange={(open) => {
-        setIsBulkMatchDialogOpen(open)
-        if (!open) {
-          setBulkMatchText('')
-          setFuzzyMatches([])
-        }
-      }}>
+      <Dialog
+        open={isBulkMatchDialogOpen}
+        onOpenChange={(open) => {
+          setIsBulkMatchDialogOpen(open)
+          if (!open) {
+            setBulkMatchText('')
+            setFuzzyMatches([])
+          }
+        }}
+      >
         <DialogContent className="sm:max-w-[500px] max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Bulk Fuzzy Select</DialogTitle>
@@ -702,8 +808,8 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           <div className="py-4 space-y-4">
             {fuzzyMatches.length === 0 ? (
               <div className="space-y-2">
-                <Textarea 
-                  placeholder="John Doe&#10;Jane Smith&#10;..." 
+                <Textarea
+                  placeholder="John Doe&#10;Jane Smith&#10;..."
                   className="min-h-[200px]"
                   value={bulkMatchText}
                   onChange={(e) => setBulkMatchText(e.target.value)}
@@ -718,17 +824,22 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   {fuzzyMatches.map((match, idx) => (
                     <div key={idx} className="flex items-center justify-between p-3 hover:bg-slate-50 dark:hover:bg-zinc-800/50">
                       <div className="space-y-1">
-                        <div className="text-sm font-medium">Pasted: <span className="text-slate-500">{match.original}</span></div>
+                        <div className="text-sm font-medium">
+                          Pasted: <span className="text-slate-500">{match.original}</span>
+                        </div>
                         <div className="text-sm">
-                          Match: {match.matchedProfile ? (
-                            <span className="font-semibold text-green-600 dark:text-green-400">{match.matchedProfile.full_name}</span>
+                          Match:{' '}
+                          {match.matchedProfile ? (
+                            <span className="font-semibold text-green-600 dark:text-green-400">
+                              {match.matchedProfile.full_name}
+                            </span>
                           ) : (
                             <span className="text-red-500">No match found</span>
                           )}
                         </div>
                       </div>
                       {match.matchedProfile && (
-                        <Checkbox 
+                        <Checkbox
                           checked={match.selected}
                           onCheckedChange={(c) => {
                             const newMatches = [...fuzzyMatches]
@@ -741,7 +852,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   ))}
                 </div>
                 <div className="flex gap-2 justify-end">
-                  <Button variant="outline" onClick={() => setFuzzyMatches([])}>Back</Button>
+                  <Button variant="outline" onClick={() => setFuzzyMatches([])}>
+                    Back
+                  </Button>
                   <Button onClick={confirmBulkMatch}>Add to Selection</Button>
                 </div>
               </div>
@@ -749,6 +862,7 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           </div>
         </DialogContent>
       </Dialog>
+
       {/* Student Transaction History Modal */}
       <Dialog open={isHistoryDialogOpen} onOpenChange={setIsHistoryDialogOpen}>
         <DialogContent className="sm:max-w-4xl max-w-4xl w-[95vw] max-h-[88vh] flex flex-col p-0 overflow-hidden rounded-2xl shadow-2xl border-slate-200 dark:border-zinc-800">
@@ -772,14 +886,16 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                 <div className="flex items-center gap-2.5 flex-wrap">
                   <div className="px-3 py-1.5 rounded-xl bg-white dark:bg-zinc-800 border border-slate-200 dark:border-zinc-700 shadow-sm text-right">
                     <span className="text-[10px] uppercase font-bold tracking-wider text-slate-400 block">Balance</span>
-                    <span className={`text-sm font-extrabold ${
-                      historyUser.current_balance > 50 
-                        ? 'text-emerald-600 dark:text-emerald-400' 
-                        : historyUser.current_balance > 0 
-                          ? 'text-amber-600 dark:text-amber-400' 
-                          : 'text-rose-600 dark:text-rose-400'
-                    }`}>
-                      ₹{parseFloat(historyUser.current_balance as unknown as string).toFixed(2)}
+                    <span
+                      className={`text-sm font-extrabold ${
+                        historyBalance >= 50
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : historyBalance > 0
+                            ? 'text-amber-600 dark:text-amber-400'
+                            : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      ₹{historyBalance.toFixed(2)}
                     </span>
                   </div>
                 </div>
@@ -790,9 +906,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
           <div className="flex-1 overflow-y-auto p-6 bg-slate-50/40 dark:bg-zinc-950/40">
             {historyLoading ? (
               <div className="flex flex-col items-center justify-center py-16">
-                <AppleLoadingCard 
-                  message="Loading ledger records..." 
-                  subtext="Retrieving verified transaction history" 
+                <AppleLoadingCard
+                  message="Loading ledger records..."
+                  subtext="Retrieving verified transaction history"
                 />
               </div>
             ) : userTransactions.length === 0 ? (
@@ -801,7 +917,9 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   <ReceiptText className="w-7 h-7 text-indigo-600 dark:text-indigo-400" />
                 </div>
                 <h4 className="text-base font-semibold text-slate-800 dark:text-slate-200">No transaction records found</h4>
-                <p className="text-xs text-slate-500 mt-1 max-w-sm">No deposits or printing deductions have been made for this student yet.</p>
+                <p className="text-xs text-slate-500 mt-1 max-w-sm">
+                  No deposits or printing deductions have been made for this student yet.
+                </p>
               </div>
             ) : (
               <div className="border border-slate-200/80 dark:border-zinc-800 rounded-xl overflow-hidden bg-white dark:bg-zinc-900 shadow-sm">
@@ -809,35 +927,46 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                   <Table className="w-full border-collapse">
                     <TableHeader>
                       <TableRow className="bg-slate-100/75 dark:bg-zinc-800/80 border-b border-slate-200 dark:border-zinc-800">
-                        <TableHead className="w-[170px] min-w-[170px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pl-4">Date & Time</TableHead>
-                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-3">Type</TableHead>
-                        <TableHead className="min-w-[260px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4">Note / Reason</TableHead>
-                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4 text-right">Amount</TableHead>
-                        <TableHead className="w-[130px] min-w-[130px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pr-5 pl-2 text-right">Balance After</TableHead>
+                        <TableHead className="w-[170px] min-w-[170px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pl-4">
+                          Date & Time
+                        </TableHead>
+                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-3">
+                          Type
+                        </TableHead>
+                        <TableHead className="min-w-[260px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4">
+                          Note / Reason
+                        </TableHead>
+                        <TableHead className="w-[120px] min-w-[120px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 px-4 text-right">
+                          Amount
+                        </TableHead>
+                        <TableHead className="w-[130px] min-w-[130px] text-[11px] font-bold uppercase text-slate-500 tracking-wider py-3.5 pr-5 pl-2 text-right">
+                          Balance After
+                        </TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody className="divide-y divide-slate-100 dark:divide-zinc-800/60">
                       {userTransactions.map((tx) => {
-                        const isCorrection = tx.note?.startsWith('Correction by Admin:') || tx.note?.toLowerCase().includes('correction')
+                        const isCorrection = isAdminCorrectionNote(tx.note)
                         return (
                           <TableRow key={tx.id} className="hover:bg-slate-50/80 dark:hover:bg-zinc-800/50 transition-colors">
                             <TableCell className="pl-4 py-3.5 text-xs font-medium text-slate-600 dark:text-slate-300 whitespace-nowrap align-top">
-                              {format(new Date(tx.created_at), 'MMM d, yyyy • h:mm a')}
+                              {formatLedgerDate(tx.created_at)}
                             </TableCell>
                             <TableCell className="px-3 py-3.5 align-top whitespace-nowrap">
                               {isCorrection ? (
-                                <Badge 
-                                  variant="outline" 
+                                <Badge
+                                  variant="outline"
                                   className="border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-800 dark:bg-amber-950/60 dark:text-amber-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md"
                                 >
                                   Correction
                                 </Badge>
                               ) : (
-                                <Badge 
-                                  variant="outline" 
-                                  className={tx.type === 'deposit' 
-                                    ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md' 
-                                    : 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md'
+                                <Badge
+                                  variant="outline"
+                                  className={
+                                    tx.type === 'deposit'
+                                      ? 'border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md'
+                                      : 'border-rose-300 bg-rose-50 text-rose-700 dark:border-rose-800 dark:bg-rose-950/60 dark:text-rose-300 font-semibold text-[11px] px-2.5 py-0.5 rounded-md'
                                   }
                                 >
                                   {tx.type === 'deposit' ? '+ Deposit' : '- Deduction'}
@@ -847,15 +976,21 @@ export default function AdminClient({ users, metrics }: { users: Profile[], metr
                             <TableCell className="px-4 py-3.5 text-xs text-slate-700 dark:text-slate-300 leading-relaxed break-words align-top">
                               {tx.note}
                             </TableCell>
-                            <TableCell className={`px-4 py-3.5 text-right text-xs font-mono font-bold whitespace-nowrap align-top ${
-                              isCorrection
-                                ? (tx.type === 'deposit' ? 'text-amber-600 dark:text-amber-400' : 'text-amber-700 dark:text-amber-500')
-                                : (tx.type === 'deposit' ? 'text-emerald-600 dark:text-emerald-400' : 'text-slate-900 dark:text-white')
-                            }`}>
-                              {tx.type === 'deposit' ? '+' : '-'}₹{parseFloat(tx.amount as unknown as string).toFixed(2)}
+                            <TableCell
+                              className={`px-4 py-3.5 text-right text-xs font-mono font-bold whitespace-nowrap align-top ${
+                                isCorrection
+                                  ? tx.type === 'deposit'
+                                    ? 'text-amber-600 dark:text-amber-400'
+                                    : 'text-amber-700 dark:text-amber-500'
+                                  : tx.type === 'deposit'
+                                    ? 'text-emerald-600 dark:text-emerald-400'
+                                    : 'text-slate-900 dark:text-white'
+                              }`}
+                            >
+                              {tx.type === 'deposit' ? '+' : '-'}₹{(parseFloat(String(tx.amount)) || 0).toFixed(2)}
                             </TableCell>
                             <TableCell className="pr-5 pl-2 py-3.5 text-right text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 whitespace-nowrap align-top">
-                              ₹{parseFloat(tx.balance_after as unknown as string).toFixed(2)}
+                              ₹{(parseFloat(String(tx.balance_after)) || 0).toFixed(2)}
                             </TableCell>
                           </TableRow>
                         )

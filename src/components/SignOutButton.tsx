@@ -6,6 +6,16 @@ import { logout } from '@/app/actions/auth'
 import { LogOut } from 'lucide-react'
 import { AppleSpinner } from './ui/apple-spinner'
 import { cn } from '@/lib/utils'
+import { toast } from 'sonner'
+
+function isNextRedirectError(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false
+  const e = err as { message?: unknown; digest?: unknown }
+  return (
+    e.message === 'NEXT_REDIRECT' ||
+    (typeof e.digest === 'string' && e.digest.startsWith('NEXT_REDIRECT'))
+  )
+}
 
 export function SignOutButton({ className }: { className?: string }) {
   const [isLoggingOut, setIsLoggingOut] = useState(false)
@@ -13,7 +23,15 @@ export function SignOutButton({ className }: { className?: string }) {
   const handleSignOut = async () => {
     if (isLoggingOut) return
     setIsLoggingOut(true)
-    await logout()
+    try {
+      await logout()
+    } catch (err: unknown) {
+      if (isNextRedirectError(err)) {
+        return
+      }
+      toast.error('Failed to sign out. Please try again.')
+      setIsLoggingOut(false)
+    }
   }
 
   return (
