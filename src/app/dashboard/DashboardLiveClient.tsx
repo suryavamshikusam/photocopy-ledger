@@ -36,7 +36,6 @@ export function DashboardLiveClient({
   const supabase = useMemo(() => createClient(), [])
   const [balance, setBalance] = useState<number>(initialBalance)
   const [transactions, setTransactions] = useState<DashboardTransactionRow[]>(initialTransactions)
-  const [isLive, setIsLive] = useState(false)
 
   useEffect(() => {
     setBalance(initialBalance)
@@ -94,9 +93,7 @@ export function DashboardLiveClient({
           }
         }
       )
-      .subscribe((status) => {
-        setIsLive(status === 'SUBSCRIBED')
-      })
+      .subscribe()
 
     return () => {
       supabase.removeChannel(channel)
@@ -122,17 +119,9 @@ export function DashboardLiveClient({
         </div>
 
         <div className="relative z-10 flex flex-col gap-4">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 text-indigo-100 font-medium">
-              <Wallet className="h-5 w-5" />
-              Available Balance
-            </div>
-            {isLive && (
-              <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-100 bg-white/15 px-2.5 py-1 rounded-full backdrop-blur-sm">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                Live Sync
-              </span>
-            )}
+          <div className="flex items-center gap-2 text-indigo-100 font-medium">
+            <Wallet className="h-5 w-5" />
+            Available Balance
           </div>
 
           <div
@@ -250,3 +239,4 @@ export function DashboardLiveClient({
     </main>
   )
 }
+
